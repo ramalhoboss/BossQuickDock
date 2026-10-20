@@ -1161,8 +1161,13 @@ static void conn_req_hook(hci_t hci, const unsigned char *ev, int n)
             break;
         case HB_CR_LEAVE:
             /* #34: not ours (a pad): we already took its request off the
-             * pipe, so get out of the way for its retry and its pairing. */
+             * pipe, so the system never saw it and nobody would answer it:
+             * the controller then holds it until the accept timeout and a
+             * pad that calls back late gives up (white light). Turn it down
+             * at once (busy, so it pages again right away) and get out of
+             * the way, so its next page and its pairing reach the system. */
             hci_usb_yield(HB_YIELD_MS);
+            btlink_reject_request(hci, a, 0x0D);
             break;
         default: break;                               /* TAKE: accepted by the state machine */
         }
