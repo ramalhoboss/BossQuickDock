@@ -1,0 +1,12 @@
+BossQuickDock
+Developed by RamalhoBoss.
+
+Modified version of HearBridge PS5 (https://github.com/X-F1REBALL-X/HearBridge-PS5),
+Copyright (c) 2026 X-F1REBALL-X. All credit for the original work goes to him.
+
+Changes by RamalhoBoss (2026-10-20): new name, icon, tile and web UI; USB
+Bluetooth transport that never cancels transfers, so a DualSense reconnects
+while audio plays; replay of system HCI replies; log size cap, logs off in
+the release build.
+
+Licensed under GPL-3.0-or-later (see LICENSE), like the original.

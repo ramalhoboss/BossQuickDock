@@ -1,0 +1,275 @@
+/* Developed by X-F1REBALL-X.
+ * Registers the tile folder with the console's app installer so it shows on
+ * the home screen; selecting it follows deeplinkUri into the browser.
+ *
+ * One build for every firmware: on EVERY start the files are rewritten and
+ * the folder is registered again (no "already installed" shortcut, so an
+ * icon deleted from the home screen always comes back). The per-title call
+ * (sceAppInstUtilAppInstallTitleDir) is looked up at run time and
+ * sceAppInstUtilAppInstallAll(0) is used when it is missing or fails. The
+ * first attempt uses the payload's own rights (as in 1.0.2, tested on fw
+ * 10.20); only if it fails is the installer called again as ShellCore (the
+ * former fw13.60 build) and the original credentials restored. An error
+ * code from re-registering an installed title counts as success when
+ * sceAppInstUtilAppExists (or /user/appmeta/<id>) says the title is
+ * installed. Every step is reported (log + diag.h). */
+#include "tile.h"
+#include "creds.h"
+#include "diag.h"
+#include "icon_png.h"
+#include "log.h"
+
+#include <ps5/kernel.h>
+
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+/* libSceAppInstUtil is not a link-time dependency: the payload runtime
+ * binds every DT_NEEDED module before main() and dies silently when one
+ * cannot be loaded, so a missing or locked-down installer module would take
+ * the whole payload (notification, page, audio) with it. It is loaded here
+ * instead; without it there is just no tile. */
+#define NID_Initialize         "540lotO7oHE"  /* sceAppInstUtilInitialize */
+#define NID_Terminate          "kLLazhNh6d4"  /* sceAppInstUtilTerminate */
+#define NID_AppUnInstall       "Sx4TTyrQccE"  /* sceAppInstUtilAppUnInstall */
+#define NID_LoadStartModule    "wzvqT4UqKX8"  /* sceKernelLoadStartModule */
+#define NID_AppInstallTitleDir "Wudg3Xe3heE"  /* sceAppInstUtilAppInstallTitleDir */
+#define NID_AppInstallAll      "+scQA5stvjs"  /* sceAppInstUtilAppInstallAll */
+#define NID_AppExists          "kUT4RpxclMQ"  /* sceAppInstUtilAppExists */
+
+static int is_dir(const char *p)
+{
+    struct stat st;
+    return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+typedef int (*fn_load_start)(const char *, size_t, const void *, uint32_t, void *, int *);
+
+/* Handle of libSceAppInstUtil.sprx, loading it on first use. */
+static uint32_t appinst_handle(void)
+{
+    static const char *const kernels[] = { "libkernel_web.sprx", "libkernel.sprx", "libkernel_sys.sprx", NULL };
+    static const char *const paths[] = { "/system/common/lib/libSceAppInstUtil.sprx",
+                                         "libSceAppInstUtil.sprx", NULL };
+    static int tried;
+    uint32_t h = 0, kh = 0;
+    fn_load_start load = NULL;
+    int i, rv = 0, res = 0;
+
+    if (kernel_dynlib_handle(-1, "libSceAppInstUtil.sprx", &h) == 0 && h) return h;
+    if (tried) return 0;
+    tried = 1;
+    for (i = 0; kernels[i] && !load; i++)
+        if (kernel_dynlib_handle(-1, kernels[i], &kh) == 0 && kh)
+            load = (fn_load_start)kernel_dynlib_resolve(-1, kh, NID_LoadStartModule);
+    if (!load) {
+        log_line("tile: no sceKernelLoadStartModule, cannot load the installer module");
+        diag_set("libSceAppInstUtil.sprx", "FAILED: sceKernelLoadStartModule not resolved");
+        return 0;
+    }
+    for (i = 0; paths[i]; i++) {
+        res = 0;
+        rv = load(paths[i], 0, NULL, 0, NULL, &res);
+        if (kernel_dynlib_handle(-1, "libSceAppInstUtil.sprx", &h) == 0 && h) {
+            log_line("tile: loaded %s (rv %d, handle %#x)", paths[i], rv, h);
+            diag_set("libSceAppInstUtil.sprx", "loaded from %s", paths[i]);
+            return h;
+        }
+    }
+    log_line("tile: cannot load libSceAppInstUtil.sprx (rv %#x, res %#x) — no home screen icon",
+             (unsigned)rv, (unsigned)res);
+    diag_set("libSceAppInstUtil.sprx", "FAILED to load (rv %#x res %#x)", (unsigned)rv, (unsigned)res);
+    return 0;
+}
+
+static void *appinst_nid(const char *nid)
+{
+    uint32_t h = appinst_handle();
+    return h ? (void *)kernel_dynlib_resolve(-1, h, nid) : NULL;
+}
+
+static int meta_exists(const char *title_id)
+{
+    char p[64];
+    snprintf(p, sizeof p, "/user/appmeta/%s", title_id);
+    return is_dir(p);
+}
+
+static unsigned long long raise_creds(void *ctx)
+{
+    return creds_elevate(HB_AUTHID_SHELLCORE, (hb_creds *)ctx, "tile");
+}
+
+static void lower_creds(void *ctx)
+{
+    creds_restore((hb_creds *)ctx, "tile");
+}
+
+static void report(tile_report *r)
+{
+    char line[DIAG_VAL_MAX];
+    tile_report_line(r, line, sizeof line);
+    log_line("tile: %s", line);
+    diag_set("tile", "%s", line);
+    diag_set("tile appmeta", "%s %s", HB_TILE_APPMETA, r->meta_after ? "exists" : "missing");
+    (void)diag_save();
+}
+
+static int unregister_id(const char *id);
+#define unregister_title() unregister_id(HB_TILE_ID)
+
+int tile_install(const char *url, tile_report *rep)
+{
+    tile_report local;
+    tile_report *r = rep ? rep : &local;
+    tile_ops ops;
+    hb_creds saved;
+
+    memset(r, 0, sizeof *r);
+    if (!url || !url[0]) url = HB_TILE_URL;
+    diag_set("tile url", "%s", url);
+
+    r->legacy_marker = unlink(HB_TILE_LEGACY_MARK) == 0;
+    if (access(HB_TILE_ROOT "/" HB_TILE_OLD_ID, F_OK) == 0 || access("/user/appmeta/" HB_TILE_OLD_ID, F_OK) == 0) {
+        /* BossQuickDock: the console keeps the name of a title id it already
+         * knows, so the app has its own id; the old HearBridge tile goes. */
+        static const char *old_files[] = { "/sce_sys/param.json", "/sce_sys/icon0.png", "/sce_sys", "" };
+        char p[96];
+        int k, rc = unregister_id(HB_TILE_OLD_ID);
+        for (k = 0; k < 4; k++) {
+            snprintf(p, sizeof p, "%s/%s%s", HB_TILE_ROOT, HB_TILE_OLD_ID, old_files[k]);
+            if (k < 2) unlink(p); else rmdir(p);
+        }
+        snprintf(p, sizeof p, "/user/appmeta/%s/param.json", HB_TILE_OLD_ID); unlink(p);
+        snprintf(p, sizeof p, "/user/appmeta/%s/icon0.png", HB_TILE_OLD_ID); unlink(p);
+        snprintf(p, sizeof p, "/user/appmeta/%s", HB_TILE_OLD_ID); rmdir(p);
+        log_line("tile: old %s tile removed (unregister %#x)", HB_TILE_OLD_ID, (unsigned)rc);
+    }
+    {
+        /* Older tile version (e.g. Games): uninstall HRBG00001 so the new
+         * param.json category (Media) is taken. Always attempt uninstall on a
+         * version mismatch — do not require appmeta/AppExists first. Media->Games
+         * once left a leftover Media icon when uninstall was skipped. */
+        char v[16] = "";
+        int have = 0;
+        FILE *f = fopen(HB_TILE_VER_PATH, "r");
+        if (f) { have = fgets(v, (int)sizeof v, f) != NULL; fclose(f); }
+        if (tile_version_mismatch(have ? v : NULL)) {
+            int (*init)(void) = (int (*)(void))appinst_nid(NID_Initialize);
+            int (*term)(void) = (int (*)(void))appinst_nid(NID_Terminate);
+            int (*exists)(const char *, int *) = (int (*)(const char *, int *))appinst_nid(NID_AppExists);
+            int rc, still = -1, e = 0;
+
+            rc = unregister_title();
+            log_line("tile: icon from tile version %s, this is %s: reinstalling (unregister %#x)",
+                     have ? v : "1", HB_TILE_VERSION, (unsigned)rc);
+            usleep(3000 * 1000);
+            /* Drop appmeta if the installer left it (often unreadable; best-effort). */
+            {
+                char meta[64], param[80], icon[80];
+                snprintf(meta, sizeof meta, "/user/appmeta/%s", HB_TILE_ID);
+                snprintf(param, sizeof param, "%s/param.json", meta);
+                snprintf(icon, sizeof icon, "%s/icon0.png", meta);
+                unlink(param);
+                unlink(icon);
+                rmdir(meta);
+            }
+            if (init && term && exists && init() == 0) {
+                if (exists(HB_TILE_ID, &e) == 0) still = (e != 0);
+                term();
+            }
+            if (still == 1) {
+                rc = unregister_title();
+                log_line("tile: still installed after unregister, retry (unregister %#x)",
+                         (unsigned)rc);
+                usleep(3000 * 1000);
+            } else if (still == 0) {
+                log_line("tile: AppExists no after unregister — clear to re-register");
+            } else {
+                log_line("tile: could not re-check AppExists after unregister");
+            }
+        }
+    }
+    errno = 0;
+    if (tile_files_write(HB_TILE_ROOT, url, hb_icon_png, sizeof hb_icon_png,
+                         NULL, 0) != 0) {
+        r->files_failed = 1;
+        r->files_errno = errno;
+        log_line("tile: cannot write %s/%s (errno %d)", HB_TILE_ROOT, HB_TILE_ID, r->files_errno);
+        r->result = -1;
+        r->code = r->files_errno;
+        r->failed = "writing " HB_TILE_ROOT "/" HB_TILE_ID;
+        report(r);
+        return -1;
+    }
+
+    memset(&ops, 0, sizeof ops);
+    ops.init = (int (*)(void))appinst_nid(NID_Initialize);
+    ops.term = (int (*)(void))appinst_nid(NID_Terminate);
+    if (!ops.init || !ops.term) {
+        r->result = -1;
+        r->failed = "loading libSceAppInstUtil.sprx";
+        log_line("tile: installer module not available — skipping the icon, the page still works");
+        report(r);
+        return -1;
+    }
+    ops.title_dir = (int (*)(const char *, const char *, void *))appinst_nid(NID_AppInstallTitleDir);
+    ops.install_all = (int (*)(void *))appinst_nid(NID_AppInstallAll);
+    ops.app_exists = (int (*)(const char *, int *))appinst_nid(NID_AppExists);
+    ops.meta_exists = meta_exists;
+
+    r->authid_before = kernel_get_ucred_authid(-1);
+    (void)tile_register_fallback(&ops, r, raise_creds, lower_creds, &saved);
+
+    if (r->result == 0) {
+        FILE *f = fopen(HB_TILE_VER_PATH, "w");
+        if (f) { fprintf(f, "%s\n", HB_TILE_VERSION); fclose(f); }
+    }
+    log_line("tile: register %s -> %s (opens %s)", HB_TILE_ID,
+             r->result ? "FAILED" : r->already ? "ok (was already installed)" : "ok", url);
+    report(r);
+    return r->result;
+}
+
+/* sceAppInstUtilAppUnInstall, with our own rights, then as ShellCore. */
+static int unregister_id(const char *id)
+{
+    hb_creds saved;
+    int rc = -1;
+    int (*init)(void) = (int (*)(void))appinst_nid(NID_Initialize);
+    int (*term)(void) = (int (*)(void))appinst_nid(NID_Terminate);
+    int (*uninstall)(const char *) = (int (*)(const char *))appinst_nid(NID_AppUnInstall);
+
+    if (init && term && uninstall) {
+        rc = init();
+        if (!rc) {
+            rc = uninstall(id);
+            term();
+        }
+        if (rc) {
+            /* Own rights refused (newer firmware): once more as ShellCore. */
+            creds_elevate(HB_AUTHID_SHELLCORE, &saved, "tile");
+            rc = init();
+            if (!rc) {
+                rc = uninstall(id);
+                term();
+            }
+            creds_restore(&saved, "tile");
+        }
+    }
+    return rc;
+}
+
+int tile_uninstall(void)
+{
+    int rc = unregister_title();
+    log_line("tile: unregister %s -> %#x", HB_TILE_ID, (unsigned)rc);
+    diag_set("tile", "removed on request (unregister %#x)", (unsigned)rc);
+    unlink(HB_TILE_LEGACY_MARK);
+    unlink(HB_TILE_VER_PATH);
+    tile_files_drop(HB_TILE_ROOT);
+    return rc ? -1 : 0;
+}

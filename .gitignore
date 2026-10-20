@@ -1,0 +1,13 @@
+/build/
+/dist/
+/logs/
+/console-fetch/
+*.o
+*.elf
+*.sbc
+*.s16
+*.bin
+*.bak*
+.DS_Store
+*.swp
+/backup-*/
