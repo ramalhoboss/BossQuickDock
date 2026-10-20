@@ -36,7 +36,7 @@ BossQuickDock is a modified build of HearBridge PS5, released under the same lic
 ## Install
 
 1. Jailbreak your PS5 and run an ELF loader (tested on firmware 13.60).
-2. Send `BossQuickDock-1.3.6.elf` to the console (for example, copy it to `/data/pldmgr/payloads/local` and launch it from your payload manager).
+2. Send `BossQuickDock-1.0.0.elf` to the console (for example, copy it to `/data/pldmgr/payloads/local` and launch it from your payload manager).
 3. Open the **BossQuickDock** tile on the home screen, or browse to `http://<console-ip>:8090` from a phone or PC.
 4. Put your headphones in pairing mode and press **Scan for devices**.
 
