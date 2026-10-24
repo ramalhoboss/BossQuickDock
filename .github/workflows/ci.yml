@@ -1,6 +1,7 @@
 # Every push and pull request: the host tests, then the console payload
 # built with the PS5 Payload SDK (import check included). The .elf is kept
-# as a build artifact.
+# as a build artifact. A v* tag also publishes the GitHub release, with
+# that .elf and release-notes/<tag>.md as its text.
 name: CI
 
 on:
@@ -44,3 +45,25 @@ jobs:
           name: BossQuickDock-elf
           path: dist/*.elf
           if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: BossQuickDock-elf
+          path: dist
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" "dist/BossQuickDock-$v.elf" \
+            --title "BossQuickDock $v" --notes-file "release-notes/$GITHUB_REF_NAME.md"
