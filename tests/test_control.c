@@ -57,19 +57,20 @@ int main(int argc, char **argv)
     strcpy(c.device, "WF-\"1000\"XM6");
     n = get(&c, "/");
     CHECK(n > 0 && !strncmp(out, "HTTP/1.1 200", 12) && strstr(out, "text/html") &&
-          strstr(out, "<title>HearBridge</title>") && !strstr(out, "HearBridge PS5"), "GET / serves the page (heading without PS5)");
+          strstr(out, "<title>BossQuickDock</title>") && strstr(out, "based on HearBridge PS5 by X-F1REBALL-X"),
+          "GET / serves the page (BossQuickDock title, HearBridge credit kept)");
     /* tile landing page + AppCache manifest (offline "load the payload" page) */
     n = get(&c, "/start");
     if (n > 0) out[n] = 0;
     CHECK(n > 0 && !strncmp(out, "HTTP/1.1 200", 12) && strstr(out, "text/html") &&
-          strstr(out, "manifest=\"/hb.appcache\"") && strstr(out, "ping?m=xhr") && strstr(out, "id=\"o\"") &&
+          strstr(out, "manifest=\"/bqd.appcache\"") && strstr(out, "ping?m=xhr") && strstr(out, "id=\"o\"") &&
           !strstr(out, "Cache-Control"), "GET /start: AppCache master page, cacheable");
     n = get(&c, "/hb.appcache");
     if (n > 0) out[n] = 0;
     CHECK(n > 0 && !strncmp(out, "HTTP/1.1 200", 12) && strstr(out, "Content-Type: text/cache-manifest") &&
-          strstr(out, "\r\n\r\nCACHE MANIFEST\n") && strstr(out, "CACHE:\n/start\n") &&
+          strstr(out, "\r\n\r\nCACHE MANIFEST\n") && strstr(out, "CACHE:\n/bqd\n") &&
           strstr(out, "NETWORK:\n*\n") && !strstr(out, "no-store"),
-          "GET /hb.appcache: manifest lists /start, rest from network");
+          "GET /hb.appcache: manifest lists /bqd, rest from network");
     /* probe endpoints used by the tile page, counted in /api/diag */
     n = get(&c, "/ping?m=xhr&t=1");
     if (n > 0) out[n] = 0;
@@ -183,8 +184,16 @@ int main(int argc, char **argv)
     c.codec_avail = (1 << 1) | (1 << 2) | (1 << 3);   /* Xbox headset: 3f ff, bitpool 2-60 */
     post(&c, "/api/codec?mode=3");
     CHECK(c.codec_pref == 3 && c.prefs_dirty && strstr(out, "\"codec_pref\":3"), "codec: SBC-XQ picked + saved per headset");
+    post(&c, "/api/codec?mode=4");
+    CHECK(!strncmp(out, "HTTP/1.1 409", 12) && c.codec_pref == 3, "codec: aptX on a headset without aptX -> refused");
+    c.codec_avail |= 1 << 4;                  /* the headset has an aptX sink */
+    post(&c, "/api/codec?mode=4");
+    CHECK(c.codec_pref == 4 && strstr(out, "\"codec_pref\":4"), "codec: aptX picked when the headset has it");
+    post(&c, "/api/codec?mode=3");
     post(&c, "/api/codec?mode=7");
     CHECK(!strncmp(out, "HTTP/1.1 400", 12) && c.codec_pref == 3, "codec: unknown mode -> 400");
+    post(&c, "/api/codec?mode=5");
+    CHECK(!strncmp(out, "HTTP/1.1 400", 12) && c.codec_pref == 3, "codec: mode past aptX -> 400");
     c.prefs_dirty = 0;
     post(&c, "/api/eq?on=1&b0=6&b4=-40");
     CHECK(c.eq_on && c.eq_db[0] == 6 && c.eq_db[4] == -12 && c.prefs_dirty && c.eq_seq &&
@@ -345,8 +354,13 @@ int main(int argc, char **argv)
             if (!((c.token[i] >= '0' && c.token[i] <= '9') || (c.token[i] >= 'a' && c.token[i] <= 'f'))) hex = 0;
         CHECK(strlen(c.token) == HB_TOKEN_LEN && hex, "token: 32 hex digits");
         CHECK(strcmp(c.token, d.token) != 0, "token: a new one per start");
+        /* The page reads this run's token from /api/status (same origin,
+         * no CORS header, so other sites cannot read it). */
+        get(&c, "/api/status");
+        CHECK(strstr(out, c.token) && !strstr(out, "Access-Control-Allow-Origin"),
+              "status carries this run's token, same origin only");
         get(&c, "/");
-        CHECK(strstr(out, c.token) && !strstr(out, HB_TOKEN_SLOT), "page carries this run's token");
+        CHECK(!strstr(out, HB_TOKEN_SLOT), "page has no unfilled token slot");
         c.muted = 0;
         get(&c, "/api/mute?on=1");
         CHECK(!strncmp(out, "HTTP/1.1 405", 12) && c.muted == 0, "GET on a state-changing endpoint -> 405, nothing changed");

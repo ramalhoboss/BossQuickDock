@@ -21,7 +21,7 @@ int main(int argc, char **argv)
     hb_prefs_parse(&p, "codec=xq\nlatency_ms=90\r\neq=on\neq_db=6,3,0,-2,-30\njunk\nfoo=bar\n");
     CHECK(p.codec == HB_CODEC_SBC_XQ && p.latency_ms == 90 && p.eq_on && p.eq_db[0] == 6 &&
           p.eq_db[3] == -2 && p.eq_db[4] == -HB_EQ_MAX_DB, "parse: values read, out-of-range clamped");
-    hb_prefs_parse(&p, "codec=aptx\nlatency_ms=5000\nlatency_ms=x\n");
+    hb_prefs_parse(&p, "codec=ldac\nlatency_ms=5000\nlatency_ms=x\n");
     CHECK(p.codec == HB_CODEC_SBC_XQ && p.latency_ms == HB_LAT_MAX_MS, "parse: unknown codec ignored, latency clamped");
     CHECK(hb_prefs_format(&p, buf, sizeof buf) > 0 && strstr(buf, "codec=xq\n") && strstr(buf, "eq_db=6,3,0,-2,-12\n"),
           "format: key=value lines");
@@ -35,6 +35,16 @@ int main(int argc, char **argv)
     CHECK(hb_prefs_load(dir, addr, &q) && !memcmp(&p, &q, sizeof p), "load what was saved");
     CHECK(hb_codec_from_key("hq") == HB_CODEC_SBC_HQ && hb_codec_from_key("x") < 0 &&
           !strcmp(hb_codec_key(99), "auto"), "codec keys");
+    CHECK(hb_codec_from_key("aptx") == HB_CODEC_APTX && !strcmp(hb_codec_key(HB_CODEC_APTX), "aptx"),
+          "codec key: aptx");
+    {
+        hb_prefs a;
+        char b2[512];
+        hb_prefs_default(&a);
+        hb_prefs_parse(&a, "codec=aptx\n");
+        CHECK(a.codec == HB_CODEC_APTX && hb_prefs_format(&a, b2, sizeof b2) > 0 && strstr(b2, "codec=aptx\n"),
+              "aptX picked for a headset is saved and read back");
+    }
     CHECK(p.gain_pct < 0, "no gain line: left unset, an old file is not overwritten");
     hb_prefs_parse(&p, "held=sbc:28\nheld=nope\n");
     CHECK(p.held_codec == HB_CODEC_SBC && p.held_bp == 28, "held codec and bitpool are read");

@@ -15,7 +15,7 @@ VERSION := $(shell sed -n 's/^\#define HEARBRIDGE_VERSION "\(.*\)"/\1/p' src/ver
 
 BUILD := build
 
-.PHONY: all ps5 send clean test test-sbc test-dump test-crypto test-control webpage test-tile test-devices test-rate icon test-acl test-mtu test-track test-pace test-diag test-reinstall test-page test-link test-prefs test-eq test-cswitch test-rejoin test-forgot test-switch test-connreq test-cfg test-chip test-night test-alerts test-linkq test-gameprof test-backup test-hfp test-linktune test-txpath
+.PHONY: all ps5 send clean test test-sbc test-aptx test-dump test-crypto test-control webpage test-tile test-devices test-rate icon test-acl test-mtu test-track test-pace test-diag test-reinstall test-page test-link test-prefs test-eq test-cswitch test-rejoin test-forgot test-switch test-connreq test-cfg test-chip test-night test-alerts test-linkq test-gameprof test-backup test-hfp test-linktune test-txpath
 
 all: ps5
 
@@ -38,6 +38,15 @@ test-sbc:
 	$(BUILD)/host/test_sbc_enc $(BUILD)/host/t.sbc $(BUILD)/host/ref.s16 53 8 16 1 0
 	ffmpeg -v error -y -f sbc -i $(BUILD)/host/t.sbc -f s16le -ac 2 $(BUILD)/host/dec.s16
 	python3 tests/sbc_snr.py $(BUILD)/host/ref.s16 $(BUILD)/host/dec.s16
+
+# aptX encoder: byte for byte against FFmpeg's encoder, then decoded by FFmpeg (SNR).
+test-aptx:
+	@mkdir -p $(BUILD)/host
+	cc -std=c11 -Wall -Wextra -O2 -D_DEFAULT_SOURCE -Isrc/a2dp tests/test_aptx_enc.c src/a2dp/aptx_enc.c -lm -o $(BUILD)/host/test_aptx_enc
+	$(BUILD)/host/test_aptx_enc $(BUILD)/host/t.aptx $(BUILD)/host/aptx_ref.s16
+	ffmpeg -v error -y -f s16le -ar 48000 -ac 2 -i $(BUILD)/host/aptx_ref.s16 -c:a aptx -f aptx $(BUILD)/host/ff.aptx
+	ffmpeg -v error -y -f aptx -sample_rate 48000 -i $(BUILD)/host/t.aptx -f s16le -ac 2 $(BUILD)/host/aptx_dec.s16
+	python3 tests/aptx_check.py $(BUILD)/host/t.aptx $(BUILD)/host/ff.aptx $(BUILD)/host/aptx_ref.s16 $(BUILD)/host/aptx_dec.s16
 
 # Media path: console SBC config + RTP builder -> media_dump.bin -> checker.
 test-dump:
@@ -94,7 +103,7 @@ icon:
 	python3 scripts/gen_icon.py assets/icon0.png src/icon_png.h
 	python3 scripts/gen_start.py src/web/start.html src/start_html.h
 
-test: test-sbc test-dump test-crypto test-control test-tile test-devices test-rate test-acl test-mtu test-track test-pace test-diag test-reinstall test-page test-link test-prefs test-eq test-cswitch test-rejoin test-forgot test-switch test-connreq test-cfg test-chip test-night test-alerts test-linkq test-gameprof test-backup test-hfp test-linktune test-txpath
+test: test-sbc test-aptx test-dump test-crypto test-control test-tile test-devices test-rate test-acl test-mtu test-track test-pace test-diag test-reinstall test-page test-link test-prefs test-eq test-cswitch test-rejoin test-forgot test-switch test-connreq test-cfg test-chip test-night test-alerts test-linkq test-gameprof test-backup test-hfp test-linktune test-txpath
 
 test-txpath:
 	@mkdir -p $(BUILD)/host
@@ -192,7 +201,7 @@ test-reinstall:
 # Control page script: GET for reads, POST + token for actions (needs node;
 # skipped when node is not installed).
 test-page:
-	@if command -v node >/dev/null 2>&1; then node tests/test_page.js src/web/index.html src/web/i18n.json; \
+	@if command -v node >/dev/null 2>&1; then node tests/test_page.js src/web/index.html; \
 	else echo "skip test-page: node not installed"; fi
 
 test-night:

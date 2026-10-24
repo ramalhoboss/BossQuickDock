@@ -15,6 +15,7 @@
 #include "version.h"
 #include "gameprof.h"
 #include "blocklist.h"
+#include "hsprefs.h"
 #ifndef HB_HTTP_HOST_TEST
 #include "hcidbg.h"
 #endif
@@ -701,10 +702,10 @@ int http_handle(hb_ctl *c, const char *req, int reqlen, char *out, int max)
             c->prefs_dirty = 1;
         }
     } else if (!strcmp(path, "/api/codec")) {
-        /* mode=0 auto, 1 SBC, 2 SBC HQ, 3 SBC-XQ (hsprefs.h); the stream
-         * loop switches the headset to it. HQ / XQ only when the connected
-         * headset's capabilities allow them (codec_avail). */
-        if (!query_int(q, "mode", &v) || v < 0 || v > 3) goto bad;
+        /* mode=0 auto, 1 SBC, 2 SBC HQ, 3 SBC-XQ, 4 aptX (hsprefs.h); the
+         * stream loop switches the headset to it. HQ / XQ / aptX only when
+         * the connected headset's capabilities allow them (codec_avail). */
+        if (!query_int(q, "mode", &v) || v < 0 || v >= HB_CODEC_N) goto bad;
         if (v >= 2 && !(c->codec_avail & (1 << v))) {
             CTL_UNLOCK(c);
             return respond(out, max, 409, "application/json",

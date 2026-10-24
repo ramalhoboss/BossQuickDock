@@ -5,7 +5,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-static const char *const g_codec_keys[HB_CODEC_N] = { "auto", "sbc", "hq", "xq" };
+static const char *const g_codec_keys[HB_CODEC_N] = { "auto", "sbc", "hq", "xq", "aptx" };
 
 const char *hb_codec_key(int codec)
 {

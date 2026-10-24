@@ -97,11 +97,46 @@ int avdtp_sbc_pick(const uint8_t caps[4], int want, int no_xq, avdtp_codec_pick 
     return 1;
 }
 
+int avdtp_aptx_caps_ok(const unsigned char *caps, int len, int *delay)
+{
+    int i = 0, found = 0;
+    if (delay) *delay = 0;
+    while (caps && i + 1 < len) {
+        int cat = caps[i], clen = caps[i + 1];
+        const unsigned char *b = caps + i + 2;
+        if (i + 2 + clen > len) break;
+        /* Media Codec: Audio, vendor specific, Qualcomm aptX, 48 kHz + stereo */
+        if (cat == 0x07 && clen >= AVDTP_APTX_IE_LEN && (b[0] >> 4) == 0 && b[1] == 0xFF &&
+            b[2] == 0x4F && b[3] == 0 && b[4] == 0 && b[5] == 0 && b[6] == 0x01 && b[7] == 0x00 &&
+            (b[8] & 0x10) && (b[8] & 0x02))
+            found = 1;
+        else if (cat == 0x08 && delay)
+            *delay = 1;
+        i += 2 + clen;
+    }
+    return found;
+}
+
+void avdtp_aptx_ie(unsigned char ie[AVDTP_APTX_IE_LEN])
+{
+    static const unsigned char v[AVDTP_APTX_IE_LEN] = {
+        0x00, 0xFF, 0x4F, 0x00, 0x00, 0x00, 0x01, 0x00, AVDTP_APTX_48K_STEREO };
+    memcpy(ie, v, sizeof v);
+}
+
 int avdtp_build_media(avdtp_session *s, const unsigned char *sbc_frames, int len,
                       int samples_in_packet, int n_sbc_frames,
                       unsigned char *pkt, int pkt_max)
 {
     int nf = n_sbc_frames > 0 ? n_sbc_frames : 1;
+    if (s && s->codec.codec == HB_CODEC_APTX) {
+        /* aptX: the codewords alone, no RTP or media payload header. */
+        if (len <= 0 || len > pkt_max) return 0;
+        memcpy(pkt, sbc_frames, (size_t)len);
+        s->rtp_seq++;
+        s->rtp_ts += (uint32_t)(samples_in_packet > 0 ? samples_in_packet : 128);
+        return len;
+    }
     if (!s || len <= 0 || 13 + len > pkt_max) return 0;
     if (nf > 15) nf = 15;              /* 4-bit NUM field, non-fragmented */
     /* RTP (RFC 3550): V=2 P=0 X=0 CC=0 | M=0 PT=96 | seq | ts | SSRC */
@@ -131,6 +166,7 @@ int avdtp_dump_open(avdtp_session *s, const char *path, int max_pkts)
 {
     FILE *f;
     if (!s || !path) return 0;
+    if (s->codec.codec == HB_CODEC_APTX) return 0;   /* the dump format and checker are SBC only */
     f = fopen(path, "wb");
     if (!f) return 0;
     fwrite("HBMD1\n", 1, 6, f);

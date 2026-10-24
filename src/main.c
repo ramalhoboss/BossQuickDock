@@ -17,6 +17,7 @@
 #include "a2dp/paired.h"
 #include "a2dp/devclass.h"
 #include "a2dp/rate.h"
+#include "a2dp/menc.h"
 #include "a2dp/sbc.h"
 #include "a2dp/sdp_a2dp.h"
 #include "avcap2.h"
@@ -2168,7 +2169,7 @@ static int codec_switch_in_place(avdtp_session *av, btlink *link, int want, int 
 /* Packs SBC frames into media packets of up to per_pkt frames. */
 typedef struct {
     avdtp_session *av;
-    sbc_encoder *enc;
+    media_enc *enc;
     btlink *link;
     hb_rate rate;
     int fsz, samples_per, per_pkt, mtu;
@@ -2196,7 +2197,7 @@ static int packer_fit(const packer *p)
 
 static void packer_size(packer *p)
 {
-    p->fsz = (int)sbc_encoder_frame_bytes(p->enc);
+    p->fsz = (int)menc_frame_bytes(p->enc);
     if (p->fsz <= 0) p->fsz = 29;
     p->per_pkt = packer_fit(p);
     if (p->tune.max_pp > 0 && p->per_pkt > p->tune.max_pp) p->per_pkt = p->tune.max_pp;
@@ -2216,12 +2217,13 @@ static void packer_flush(packer *p)
     p->nbytes = p->nframes = 0;
     p->bl_sum += btlink_tx_backlog(p->link);
     p->bl_n++;
+    if (menc_is_aptx(p->enc)) return;    /* fixed rate: no bitpool to adapt */
     /* Between packets: adapt the bitpool to what the radio delivers. */
     bp = hb_rate_update(&p->rate, now_ms(), btlink_tx_backlog(p->link),
                         btlink_media_cap(p->link), btlink_tx_dropped(p->link));
-    if (bp != sbc_encoder_bitpool(p->enc)) {
-        int old = sbc_encoder_bitpool(p->enc), old_pp = p->per_pkt;
-        sbc_encoder_set_bitpool(p->enc, bp);
+    if (bp != menc_bitpool(p->enc)) {
+        int old = menc_bitpool(p->enc), old_pp = p->per_pkt;
+        menc_set_bitpool(p->enc, bp);
         packer_size(p);
         log_line("media: bitpool %d -> %d (queue %d, dropped %ld): %d-byte frames, %d -> %d frames/packet",
                  old, bp, btlink_tx_backlog(p->link), btlink_tx_dropped(p->link),
@@ -2277,10 +2279,10 @@ static void tune_link(packer *p, long now)
     in.cap = btlink_media_cap(p->link);
     act = hb_tune_step(&p->tune, &in);
     if (act == HB_TUNE_DIP) {
-        int old = sbc_encoder_bitpool(p->enc);
+        int old = menc_bitpool(p->enc);
         hb_rate_hold_floor(&p->rate, now, p->tune.freeze_until);
-        if (p->rate.cur != old) {
-            sbc_encoder_set_bitpool(p->enc, p->rate.cur);
+        if (p->rate.cur != old && !menc_is_aptx(p->enc)) {
+            menc_set_bitpool(p->enc, p->rate.cur);
             packer_size(p);
         }
         log_line("tune: %s for %d s (%ld dropped, backlog %d/%d, %.0f credits/s for %.0f packets/s, bitpool %d -> %d)",
@@ -2306,11 +2308,11 @@ static int packer_feed(packer *p, const int16_t *pcm, int frames)
     while (off < frames) {
         int chunk = frames - off, got;
         if (chunk > p->samples_per) chunk = p->samples_per;
-        got = sbc_encoder_encode(p->enc, pcm + off * 2, chunk, p->buf + p->nbytes,
-                                 sizeof p->buf - (size_t)p->nbytes);
+        got = menc_encode(p->enc, pcm + off * 2, chunk, p->buf + p->nbytes,
+                          sizeof p->buf - (size_t)p->nbytes);
         off += chunk;
         if (got < 0) {
-            log_line("media: SBC encode error");
+            log_line("media: %s encode error", menc_is_aptx(p->enc) ? "aptX" : "SBC");
             return 0;
         }
         if (got == 0) continue;
@@ -2340,7 +2342,7 @@ static int run_session(a2dp_session *asess, hci_t hci, headset_ini *ini)
 {
     btlink *link = NULL;
     avdtp_session av;
-    sbc_encoder *enc = NULL;
+    media_enc *enc = NULL;
     avcap2_session *cap = NULL;
     sbc_config scfg;
     packer pk;
@@ -2535,9 +2537,9 @@ stream_setup:
     scfg.joint_stereo = av.sink.joint_stereo;
     memcpy(scfg.a2dp_ie, av.sbc_cfg, 4);
     scfg.have_a2dp_ie = 1;
-    enc = sbc_encoder_open(&scfg);
+    enc = av.codec.codec == HB_CODEC_APTX ? menc_open_aptx() : menc_open_sbc(&scfg);
     if (!enc) {
-        log_line("stream: SBC encoder open failed");
+        log_line("stream: %s encoder open failed", av.codec.name ? av.codec.name : "SBC");
         goto done;
     }
 
@@ -2552,7 +2554,7 @@ stream_setup:
     pk.av = &av;
     pk.enc = enc;
     pk.link = link;
-    pk.samples_per = sbc_encoder_frame_samples(enc);
+    pk.samples_per = menc_frame_samples(enc);
     if (pk.samples_per <= 0) pk.samples_per = 128;
     mtu = btlink_chan_peer_mtu(link, av.media_scid);
     if (!mtu) mtu = 672;
@@ -2580,13 +2582,13 @@ stream_setup:
                  pk.queue_ms, btlink_media_cap(link), btlink_media_cap(link) * pkt_ms);
     }
     hb_rate_init(&pk.rate, av.bitpool_lo ? av.bitpool_lo : av.bitpool,
-                 av.bitpool_hi ? av.bitpool_hi : av.bitpool, sbc_encoder_bitpool(enc), now_ms());
+                 av.bitpool_hi ? av.bitpool_hi : av.bitpool, menc_bitpool(enc), now_ms());
     /* SBC HQ may climb above 53 (to the sink's maximum); SBC-XQ (dual
      * channel) stops at its own ceiling. */
     hb_rate_set_ceiling(&pk.rate, av.bitpool_hi ? av.bitpool_hi : av.bitpool, av.codec.ceil);
-    log_line("stream: media MTU %u, SBC frame %d bytes, %d frames/packet, bitpool %d "
-             "(adapts %d-%d)", mtu, pk.fsz, pk.per_pkt, sbc_encoder_bitpool(enc),
-             pk.rate.lo, pk.rate.hi);
+    log_line("stream: media MTU %u, %s frame %d bytes, %d frames/packet, bitpool %d "
+             "(adapts %d-%d)", mtu, av.codec.name ? av.codec.name : "SBC", pk.fsz, pk.per_pkt,
+             menc_bitpool(enc), pk.rate.lo, pk.rate.hi);
 
     /* Debug only: create /data/hearbridge/media_dump to write the first
      * media payloads to media_dump.bin (checked with tests/decode_dump). */
@@ -2649,7 +2651,7 @@ stream_setup:
     g_bg_pages = 0;               /* a new drop gets a fresh, bounded set of pages */
     g_rest_resume = g_rest_wake = g_rest_stop = 0;
     for (;;) {
-        int nframes, req_vol = -1, req_disc = 0, changed = 0, req_codec = -1;
+        int nframes, req_vol = -1, req_disc = 0, changed = 0, req_codec = -1, batt_toast = 0;
         float peak = 0.f;
         long now, ahead_ms;
 
@@ -2824,7 +2826,7 @@ stream_setup:
             want_codec = cs_want;
             cs_want = -1;
             if (ok) {
-                sbc_encoder_close(enc);
+                menc_close(enc);
                 enc = NULL;
                 switched = 1;
                 goto stream_setup;
@@ -2927,7 +2929,7 @@ stream_setup:
                      pk.pkts, pk.frames,
                      reads_ok, reads_empty, (double)peak_seen, out_peak / 1000.0,
                      gain_milli / 1000.0, hs_vol, btlink_tx_backlog(link),
-                     sbc_encoder_bitpool(enc), pk.per_pkt, pk.mtu, pk.fsz, btlink_tx_dropped(link));
+                     menc_bitpool(enc), pk.per_pkt, pk.mtu, pk.fsz, btlink_tx_dropped(link));
             CTL_LOCK(&g_ctl);
             g_ctl.pkts = pk.pkts;
             g_ctl.frames = pk.frames;
@@ -2935,7 +2937,7 @@ stream_setup:
             g_ctl.peak_milli = (int)(peak_seen * 1000.f);
             g_ctl.out_peak_milli = out_peak;
             g_ctl.backlog = btlink_tx_backlog(link);
-            g_ctl.bitpool = sbc_encoder_bitpool(enc);
+            g_ctl.bitpool = menc_bitpool(enc);
             g_ctl.per_packet = pk.per_pkt;
             g_ctl.dropped = btlink_tx_dropped(link);
             g_ctl.bitpool_lo = pk.rate.lo;
@@ -2997,6 +2999,7 @@ stream_setup:
                         g_ctl.batt_alert_seq++;
                         snprintf(evl, sizeof evl, "Headset battery at %d%%", warn);
                         ctl_event_locked(&g_ctl, evl);
+                        batt_toast = warn;         /* on screen too, once the lock is dropped */
                     }
                 }
                 g_ctl.link_rssi = rssi;
@@ -3087,7 +3090,7 @@ stream_setup:
                         packer_size(&pk);
                         fl_stage = 1;
                         log_line("stream: %d drops/min for 10 s at RSSI %d - fresh queue (%d dropped) and packet tuner, "
-                                 "%d frames/packet, bitpool %d", dpm, rssi, gone, pk.per_pkt, sbc_encoder_bitpool(enc));
+                                 "%d frames/packet, bitpool %d", dpm, rssi, gone, pk.per_pkt, menc_bitpool(enc));
                         ctl_event_locked(&g_ctl, "Audio keeps dropping, resetting the audio queue");
                     } else if (fl_s >= 30 && fl_stage == 1) {
                         fl_stage = 2;
@@ -3137,6 +3140,8 @@ stream_setup:
                 }
             }
             CTL_UNLOCK(&g_ctl);
+            if (batt_toast)
+                notify(HB_APP_NAME ": %s battery at %d%%", ini->name[0] ? ini->name : "headset", batt_toast);
             if (hs_dirty) {
                 hs_dirty = 0;
                 prefs_save();
@@ -3144,7 +3149,7 @@ stream_setup:
             bg_tick(ini);
             tune_link(&pk, now);
             if (hb_rate_settled(&pk.rate, now)) {
-                int bp = sbc_encoder_bitpool(enc);
+                int bp = menc_bitpool(enc);
                 if (bp > 0 && (bp != g_prefs.held_bp || av.codec.codec != g_prefs.held_codec)) {
                     if (++settle_s >= 15) {
                         g_prefs.held_codec = av.codec.codec;
@@ -3229,7 +3234,7 @@ stream_setup:
 
 done:
     if (cap) avcap2_session_close(cap);
-    if (enc) sbc_encoder_close(enc);
+    if (enc) menc_close(enc);
     if (av.link) avdtp_teardown(&av);
     if (link) {
         btlink_disconnect(link);
@@ -3808,7 +3813,8 @@ int main(void)
         if ((r == RUN_PAUSED || paused) && ini.ok && !g_rest_resume) hold_add(ini.addr, 1);
         if (r == RUN_DROPPED) {
             g_want_until = 0;
-            notify(HB_APP_NAME ": connection lost");
+            notify(HB_APP_NAME ": connection lost%s%s", ini.ok && ini.name[0] ? "\n" : "",
+                   ini.ok && ini.name[0] ? ini.name : "");
         }
         /* Case / power-off (RUN_AWAY): stay disconnected and listen.
          * Don't page a headset that just went away. */

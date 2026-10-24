@@ -88,6 +88,51 @@ int main(int argc, char **argv)
                bad ? "FAIL" : "ok", bad ? " (see bits)" : "");
         if (bad) { printf("FAIL bits %#x\n", bad); return 1; }
     }
+    {
+        /* aptX: capability lists as headsets send them (Media Transport,
+         * Media Codec, Delay Reporting), the IE we configure, the packet. */
+        static const unsigned char aptx_caps[] = { 0x01, 0x00, 0x07, 0x09, 0x00, 0xFF, 0x4F, 0x00, 0x00, 0x00,
+                                                   0x01, 0x00, 0x33, 0x08, 0x00 };
+        static const unsigned char aptx_441[] = { 0x01, 0x00, 0x07, 0x09, 0x00, 0xFF, 0x4F, 0x00, 0x00, 0x00,
+                                                  0x01, 0x00, 0x22 };
+        static const unsigned char aptx_mono[] = { 0x07, 0x09, 0x00, 0xFF, 0x4F, 0x00, 0x00, 0x00, 0x01, 0x00, 0x11 };
+        static const unsigned char aptx_hd[] = { 0x07, 0x0A, 0x00, 0xFF, 0xD7, 0x00, 0x00, 0x00, 0x24, 0x00, 0x12,
+                                                 0x00 };
+        static const unsigned char ldac[] = { 0x07, 0x0A, 0x00, 0xFF, 0x2D, 0x01, 0x00, 0x00, 0xAA, 0x00, 0x3C,
+                                              0x07 };
+        static const unsigned char sbc_caps[] = { 0x01, 0x00, 0x07, 0x06, 0x00, 0x00, 0x3f, 0xff, 2, 53 };
+        static const unsigned char cut[] = { 0x07, 0x09, 0x00, 0xFF, 0x4F, 0x00, 0x00 };
+        static const unsigned char want_ie[AVDTP_APTX_IE_LEN] = { 0x00, 0xFF, 0x4F, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12 };
+        static const uint8_t xbox[4] = { 0x3f, 0xff, 2, 60 };
+        unsigned char ie9[AVDTP_APTX_IE_LEN], cw[640], out[1024];
+        avdtp_session a;
+        avdtp_codec_pick c;
+        const char *why;
+        int bad = 0, dly = -1, n;
+        if (!avdtp_aptx_caps_ok(aptx_caps, (int)sizeof aptx_caps, &dly) || dly != 1) bad |= 1;
+        if (avdtp_aptx_caps_ok(aptx_441, (int)sizeof aptx_441, &dly) || dly != 0) bad |= 2;   /* 44.1 kHz only */
+        if (avdtp_aptx_caps_ok(aptx_mono, (int)sizeof aptx_mono, &dly)) bad |= 4;             /* mono only */
+        if (avdtp_aptx_caps_ok(aptx_hd, (int)sizeof aptx_hd, &dly)) bad |= 8;                 /* aptX HD is not aptX */
+        if (avdtp_aptx_caps_ok(ldac, (int)sizeof ldac, &dly)) bad |= 16;
+        if (avdtp_aptx_caps_ok(sbc_caps, (int)sizeof sbc_caps, &dly)) bad |= 32;
+        if (avdtp_aptx_caps_ok(cut, (int)sizeof cut, &dly) || avdtp_aptx_caps_ok(NULL, 0, NULL)) bad |= 64;
+        avdtp_aptx_ie(ie9);
+        if (memcmp(ie9, want_ie, sizeof ie9)) bad |= 128;
+        /* The pure SBC pick never turns into aptX: aptX is chosen in avdtp.c
+         * only when the headset has an aptX SEP. */
+        if (!avdtp_sbc_pick(xbox, HB_CODEC_APTX, 0, &c, &why, 0, 0) || c.codec != HB_CODEC_SBC ||
+            (c.avail & (1 << HB_CODEC_APTX))) bad |= 256;
+        memset(&a, 0, sizeof a);
+        a.codec.codec = HB_CODEC_APTX;
+        for (n = 0; n < (int)sizeof cw; n++) cw[n] = (unsigned char)(n * 7);
+        n = avdtp_build_media(&a, cw, (int)sizeof cw, 640, 5, out, (int)sizeof out);
+        if (n != (int)sizeof cw || memcmp(out, cw, sizeof cw)) bad |= 512;   /* no RTP / media header */
+        if (avdtp_build_media(&a, cw, (int)sizeof cw, 640, 5, out, 600) != 0) bad |= 1024;
+        if (avdtp_dump_open(&a, "/nonexistent/x", 1)) bad |= 2048;       /* dump is SBC only */
+        printf("%s   aptX: 48 kHz stereo caps found (not HD / LDAC / 44.1k / mono), IE 4f/0001/12, raw packets%s\n",
+               bad ? "FAIL" : "ok", bad ? " (see bits)" : "");
+        if (bad) { printf("FAIL bits %#x\n", bad); return 1; }
+    }
     memset(&s, 0, sizeof s);
     memcpy(s.sbc_cfg, ie, 4);
     s.rtp_ssrc = 0x48524247; s.rtp_seq = 1;

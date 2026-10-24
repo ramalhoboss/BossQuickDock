@@ -1,0 +1,46 @@
+# Every push and pull request: the host tests, then the console payload
+# built with the PS5 Payload SDK (import check included). The .elf is kept
+# as a build artifact.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PS5_SDK_VERSION: v0.45
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-18 lld-18 llvm-18 ffmpeg python3-numpy nodejs unzip
+
+      - name: Host tests
+        run: make test
+
+      - name: PS5 Payload SDK ${{ env.PS5_SDK_VERSION }}
+        run: |
+          curl -fsSL -o /tmp/sdk.zip \
+            "https://github.com/ps5-payload-dev/sdk/releases/download/${PS5_SDK_VERSION}/ps5-payload-sdk.zip"
+          sudo unzip -q /tmp/sdk.zip -d /opt
+
+      - name: Build the payload
+        run: |
+          make ps5 PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BossQuickDock-elf
+          path: dist/*.elf
+          if-no-files-found: error

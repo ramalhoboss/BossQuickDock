@@ -6,7 +6,10 @@
 
 #define HB_PREFS_DIR "/data/hearbridge/prefs"
 
-enum { HB_CODEC_AUTO = 0, HB_CODEC_SBC = 1, HB_CODEC_SBC_HQ = 2, HB_CODEC_SBC_XQ = 3, HB_CODEC_N };
+/* HB_CODEC_APTX: aptX (classic), only when picked on the page and the
+ * headset has an aptX sink end point; never what Auto starts on. */
+enum { HB_CODEC_AUTO = 0, HB_CODEC_SBC = 1, HB_CODEC_SBC_HQ = 2, HB_CODEC_SBC_XQ = 3, HB_CODEC_APTX = 4,
+       HB_CODEC_N };
 
 #define HB_EQ_BANDS   5
 #define HB_EQ_MAX_DB 12

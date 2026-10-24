@@ -44,23 +44,23 @@ int main(void)
     {
         char j2[2048];
         CHECK(tile_manifest(j2, sizeof j2, HB_TILE_START_URL) > 0 &&
-              strstr(j2, "\"deeplinkUri\": \"http://127.0.0.1:8090/start\""),
-              "manifest takes the /start link");
+              strstr(j2, "\"deeplinkUri\": \"http://127.0.0.1:8090/bqd\""),
+              "manifest takes the /bqd link");
         CHECK(!strstr(j2, "file://") && atoi(HB_TILE_VERSION) > 8, "no file:// link, tile version bumped past 8");
     }
     CHECK(strstr((const char *)hb_start_html, "127.0.0.1:8090") &&
-          strstr((const char *)hb_start_html, "HearBridge is not running") &&
+          strstr((const char *)hb_start_html, "BossQuickDock is not running") &&
           strstr((const char *)hb_start_html, "ar:[") && !strstr((const char *)hb_start_html, "he:["),
           "fallback page probes the server, has languages, no Hebrew");
-    CHECK(strstr((const char *)hb_start_html, "<html manifest=\"/hb.appcache\">"),
+    CHECK(strstr((const char *)hb_start_html, "<html lang=\"en\" manifest=\"/bqd.appcache\">"),
           "start page is an AppCache master entry");
     CHECK(strstr((const char *)hb_start_html, "ping?m=xhr") && strstr((const char *)hb_start_html, "ping?m=fetch") &&
           strstr((const char *)hb_start_html, "ping.gif") && strstr((const char *)hb_start_html, "ping.js") &&
           strstr((const char *)hb_start_html, "ping.html") && !strstr((const char *)hb_start_html, "navigator.onLine===true"),
           "start page probes by XHR, fetch, image, script and frame");
-    CHECK(strstr(js, "\"titleName\": \"HearBridge\"") && !strstr(js, "PS5"), "tile title is plain HearBridge");
+    CHECK(strstr(js, "\"titleName\": \"BossQuickDock\"") && !strstr(js, "PS5"), "tile title is plain BossQuickDock");
     CHECK(!strstr((const char *)hb_start_html, "PS5.elf") && !strstr((const char *)hb_start_html, "PS5") && !strstr((const char *)hb_start_html, "PS 5") &&
-          strstr((const char *)hb_start_html, "Load HearBridge with your ELF loader first"),
+          strstr((const char *)hb_start_html, "Load BossQuickDock with your ELF loader first"),
           "start page does not name the ELF file");
     CHECK(!strstr((const char *)hb_start_html, "ailbreak") && strstr((const char *)hb_start_html, "Checking...") &&
           strstr((const char *)hb_start_html, "/debug/.test(location.search+location.hash)"),

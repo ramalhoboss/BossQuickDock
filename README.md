@@ -32,23 +32,28 @@ BossQuickDock is a modified build of HearBridge PS5, released under the same lic
 
 - Brand-new control page with a PlayStation-style look, live waveform, tabs for Home / Devices / Games / System
 - New name, icon and home-screen tile
+- **aptX** (1.1.0) for headsets with a Qualcomm aptX decoder: pick **aptX** under System → Codec. It only lights up when the connected headset advertises aptX at 48 kHz stereo; Auto stays plain SBC. The encoder is a port of FFmpeg's (byte-for-byte identical output, checked by `make test-aptx`).
+- **Low battery on screen** (1.1.0): a console notification at 20 % and 10 %, not only on the control page; "connection lost" now names the headset.
+- Built with PS5 Payload SDK v0.45 (adds firmware 14.00 / 14.10 kernel offsets).
 
 ## Install
 
 1. Jailbreak your PS5 and run an ELF loader (tested on firmware 13.60).
-2. Send `BossQuickDock-1.0.1.elf` to the console (for example, copy it to `/data/pldmgr/payloads/local` and launch it from your payload manager).
+2. Send `BossQuickDock-1.1.0.elf` to the console (for example, copy it to `/data/pldmgr/payloads/local` and launch it from your payload manager).
 3. Open the **BossQuickDock** tile on the home screen, or browse to `http://<console-ip>:8090` from a phone or PC.
 4. Put your headphones in pairing mode and press **Scan for devices**.
 
 ## Build
 
-Requires the [PS5 Payload SDK](https://github.com/ps5-payload-dev/sdk).
+Requires the [PS5 Payload SDK](https://github.com/ps5-payload-dev/sdk) (v0.45 or newer).
 
 ```bash
 python3 scripts/build_ui.py
 python3 scripts/gen_webpage.py src/web/index.html src/webpage.h src/web/i18n.json
 make ps5 PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
 ```
+
+`make test` runs the host tests (needs cc, ffmpeg, python3 with numpy, and node). GitHub Actions runs them and builds the ELF on every push (`.github/workflows/ci.yml`).
 
 The ELF is written to `dist/BossQuickDock-<version>.elf`. Build with `-DBQD_LOG_TO_FILE=1` to get a debug log in `/data/hearbridge/hearbridge.log`.
 

@@ -68,6 +68,9 @@ typedef struct {
     int want_codec, no_xq;    /* request (HB_CODEC_*), see avdtp_sbc_pick() */
     int held_codec, held_bp;  /* last codec/bitpool that held (0 = none) */
     avdtp_codec_pick codec;   /* what was configured */
+    int sbc_seid;             /* sink SEP with SBC (0 = not known) */
+    int aptx_seid;            /* sink SEP with aptX 48 kHz stereo (0 = none found) */
+    int aptx_delay;           /* that SEP lists Delay Reporting */
     int delay_on;             /* Delay Reporting was configured */
     int sink_delay_x10;       /* last DELAY_REPORT from the sink, 1/10 ms (0 = none yet) */
     long delay_reports;
@@ -90,12 +93,24 @@ int avdtp_sbc_pick_mode(unsigned char caps0, int *joint, const char **why);
 int avdtp_sbc_pick(const uint8_t caps[4], int want, int no_xq, avdtp_codec_pick *out,
                    const char **why, int held_codec, int held_bp);
 
+/* aptX (classic): vendor codec 0xFF, Qualcomm vendor id 0x0000004F, codec
+ * id 0x0001; one octet with the frequency in the high nibble (48 kHz =
+ * 0x1) and the channel mode in the low one (stereo = 0x2). */
+#define AVDTP_APTX_IE_LEN 9          /* media type .. channel/frequency octet */
+#define AVDTP_APTX_48K_STEREO 0x12
+/* A capability list (GET_(ALL_)CAPABILITIES body) carries aptX that takes
+ * 48 kHz stereo: 1, and *delay = it lists Delay Reporting. Pure. */
+int  avdtp_aptx_caps_ok(const unsigned char *caps, int len, int *delay);
+/* The aptX Media Codec element body we configure (AVDTP_APTX_IE_LEN bytes). Pure. */
+void avdtp_aptx_ie(unsigned char ie[AVDTP_APTX_IE_LEN]);
+
 /* Open signaling, Discover → GetAllCaps/GetCaps → SetConfiguration →
  * Open → media channel → Start. Returns 1 on success. */
 int avdtp_setup(avdtp_session *s, btlink *link, unsigned avdtp_psm, int want_codec, int no_xq);
 
 /* Send one media packet: RTP + A2DP media hdr (frame count) + SBC frames.
- * n_sbc_frames must match len/frame_bytes and be 1..15 (non-fragmented). */
+ * n_sbc_frames must match len/frame_bytes and be 1..15 (non-fragmented).
+ * aptX: the codewords alone, no RTP or media header (as other sources send it). */
 int avdtp_send_media(avdtp_session *s, const unsigned char *sbc_frames, int len,
                      int samples_in_packet, int n_sbc_frames);
 

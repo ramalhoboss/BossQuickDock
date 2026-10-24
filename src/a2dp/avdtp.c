@@ -72,6 +72,12 @@ static void avdtp_answer_remote(avdtp_session *s, unsigned scid,
     case AV_GET_ALL_CAPABILITIES:
         r[0] = AV_HDR(rlabel, AV_PKT_SINGLE, AV_MSG_ACCEPT);
         r[n++] = 0x01; r[n++] = 0x00;          /* Media Transport */
+        if (s->codec.codec == HB_CODEC_APTX) {
+            /* Our SEP is being set up for aptX: say so to a sink that checks. */
+            r[n++] = 0x07; r[n++] = AVDTP_APTX_IE_LEN;
+            avdtp_aptx_ie(r + n); n += AVDTP_APTX_IE_LEN;
+            break;
+        }
         r[n++] = 0x07; r[n++] = 0x06;          /* Media Codec */
         r[n++] = 0x00; r[n++] = 0x00;          /* Audio, SBC */
         r[n++] = 0x13; r[n++] = 0xFF;          /* 48 kHz, stereo/joint; all blocks/subbands/alloc */
@@ -88,6 +94,11 @@ static void avdtp_answer_remote(avdtp_session *s, unsigned scid,
         if (!s->configured) goto bad_state;
         r[0] = AV_HDR(rlabel, AV_PKT_SINGLE, AV_MSG_ACCEPT);
         r[n++] = 0x01; r[n++] = 0x00;
+        if (s->codec.codec == HB_CODEC_APTX) {
+            r[n++] = 0x07; r[n++] = AVDTP_APTX_IE_LEN;
+            avdtp_aptx_ie(r + n); n += AVDTP_APTX_IE_LEN;
+            break;
+        }
         r[n++] = 0x07; r[n++] = 0x06;
         r[n++] = 0x00; r[n++] = 0x00;
         memcpy(r + n, s->sbc_cfg, 4); n += 4;
@@ -407,6 +418,61 @@ static int pick_sbc_config(avdtp_session *s, int want)
     return 1;
 }
 
+/* The codec to configure: aptX on its own SEP when it was asked for and
+ * the headset has one; otherwise SBC (pick_sbc_config) on the SBC SEP.
+ * The SBC pick always runs first: it checks 48 kHz stereo and fills avail. */
+static int pick_codec(avdtp_session *s, int want)
+{
+    if (s->sbc_seid) s->sink.seid = s->sbc_seid;
+    if (!pick_sbc_config(s, want == HB_CODEC_APTX ? HB_CODEC_SBC : want)) return 0;
+    if (s->aptx_seid) s->codec.avail |= 1 << HB_CODEC_APTX;
+    if (want == HB_CODEC_APTX && s->aptx_seid) {
+        s->codec.codec = HB_CODEC_APTX;
+        s->codec.name = "aptX";
+        s->codec.start_bp = s->codec.ceil = 0;
+        s->bitpool = 0;
+        s->sink.seid = s->aptx_seid;
+        log_line("codec: aptX on sink SEP %d (48 kHz stereo, 384 kbit/s)", s->aptx_seid);
+    } else if (want == HB_CODEC_APTX) {
+        log_line("codec: aptX asked but this headset has no aptX sink - using SBC");
+    }
+    return 1;
+}
+
+/* The other audio sink SEPs: is one of them aptX at 48 kHz stereo? Short
+ * single tries (s->quick): a headset slow to answer costs ~1 s per SEP,
+ * once per connection. Busy SEPs are skipped (another device has them). */
+static void find_aptx_sep(avdtp_session *s, const unsigned char *disc, int nseid)
+{
+    unsigned char body[1], caps[256];
+    int i, caps_len = 0, quick = s->quick, tried = 0;
+
+    s->aptx_seid = 0;
+    s->aptx_delay = 0;
+    s->quick = 1;
+    for (i = 0; i < nseid && !s->aptx_seid; i++) {
+        int seid, in_use, tsep, media, msg, dly = 0;
+        parse_sep(disc + i * 2, &seid, &in_use, &tsep, &media);
+        if (tsep != 1 || media != 0 || in_use || seid == s->sink.seid) continue;
+        tried++;
+        body[0] = (unsigned char)((seid & 0x3F) << 2);
+        msg = avdtp_cmd(s, AV_GET_ALL_CAPABILITIES, body, 1, caps, (int)sizeof caps, &caps_len);
+        if (msg == AV_MSG_REJECT || msg == AV_MSG_GEN_REJ)
+            msg = avdtp_cmd(s, AV_GET_CAPABILITIES, body, 1, caps, (int)sizeof caps, &caps_len);
+        if (msg != AV_MSG_ACCEPT) continue;
+        if (avdtp_aptx_caps_ok(caps, caps_len, &dly)) {
+            s->aptx_seid = seid;
+            s->aptx_delay = dly;
+        }
+    }
+    s->quick = quick;
+    if (s->aptx_seid)
+        log_line("avdtp: aptX sink on SEP %d%s (pick aptX on the page to use it)",
+                 s->aptx_seid, s->aptx_delay ? ", delay reports" : "");
+    else if (tried)
+        log_line("avdtp: no aptX sink among %d other SEP(s)", tried);
+}
+
 static int configure_and_start(avdtp_session *s);
 
 int avdtp_setup(avdtp_session *s, btlink *link, unsigned avdtp_psm, int want_codec, int no_xq)
@@ -469,7 +535,8 @@ int avdtp_setup(avdtp_session *s, btlink *link, unsigned avdtp_psm, int want_cod
         s->sink.bitpool_max = s->remote_sbc[3];
         s->sink.have_sbc = 1;
         s->sink.delay_report = s->delay_on;
-        if (!pick_sbc_config(s, s->want_codec)) {
+        s->sbc_seid = s->sink.seid;
+        if (!pick_codec(s, s->want_codec)) {
             s->unsupported_format = 1;
             return 0;
         }
@@ -578,17 +645,46 @@ int avdtp_setup(avdtp_session *s, btlink *link, unsigned avdtp_psm, int want_cod
             log_line("avdtp: the headset has no SBC sink");
             return 0;
         }
+        find_aptx_sep(s, disc, nseid);
     }
+    s->sbc_seid = s->sink.seid;
     log_line("avdtp: SBC sink %d, capabilities %02x %02x, bitpool %u-%u",
              s->sink.seid, s->sink.sbc_caps[0], s->sink.sbc_caps[1],
              (unsigned)s->sink.bitpool_min, (unsigned)s->sink.bitpool_max);
 
-    if (!pick_sbc_config(s, s->want_codec)) {
+    if (!pick_codec(s, s->want_codec)) {
         s->unsupported_format = 1;
         return 0;
     }
 
     return configure_and_start(s);
+}
+
+/* SET_CONFIGURATION body for the codec in s->codec on s->sink.seid, with
+ * Delay Reporting when want_delay and that SEP lists it. Returns its length. */
+static int setcfg_body(avdtp_session *s, unsigned char *body, int want_delay)
+{
+    int n = 0, aptx = s->codec.codec == HB_CODEC_APTX;
+    body[n++] = (unsigned char)(s->sink.seid << 2);
+    body[n++] = (unsigned char)(s->int_seid << 2);
+    body[n++] = 0x01; body[n++] = 0x00; /* Media Transport */
+    if (aptx) {
+        body[n++] = 0x07; body[n++] = AVDTP_APTX_IE_LEN;
+        avdtp_aptx_ie(body + n);
+        n += AVDTP_APTX_IE_LEN;
+    } else {
+        body[n++] = 0x07; body[n++] = 0x06; /* Media Codec len 6 */
+        body[n++] = 0x00; /* Audio << 4 */
+        body[n++] = 0x00; /* SBC */
+        memcpy(body + n, s->sbc_cfg, 4);
+        n += 4;
+    }
+    s->delay_on = want_delay && (aptx ? s->aptx_delay : s->sink.delay_report);
+    if (s->delay_on) {
+        /* The sink can tell us how much it buffers: ask for it. */
+        body[n++] = 0x08; body[n++] = 0x00;
+    }
+    return n;
 }
 
 /* SET_CONFIGURATION (with fallbacks) + OPEN + media channel + START on the
@@ -612,62 +708,56 @@ static int configure_and_start(avdtp_session *s)
     }
     /* SetConfiguration: ACP SEID, INT SEID, Media Transport + Media Codec */
     {
-        int n = 0, co;
-        body[n++] = (unsigned char)(s->sink.seid << 2);
-        body[n++] = (unsigned char)(s->int_seid << 2);
-        body[n++] = 0x01; body[n++] = 0x00; /* Media Transport */
-        body[n++] = 0x07; body[n++] = 0x06; /* Media Codec len 6 */
-        body[n++] = 0x00; /* Audio << 4 */
-        body[n++] = 0x00; /* SBC */
-        co = n;
-        memcpy(body + n, s->sbc_cfg, 4);
-        n += 4;
-        s->delay_on = 0;
+        int n, dly = 1;
         s->sink_delay_x10 = 0;
         s->delay_reports = 0;
-        if (s->sink.delay_report) {
-            /* The sink can tell us how much it buffers: ask for it. */
-            body[n++] = 0x08; body[n++] = 0x00;
-            s->delay_on = 1;
-        }
+        n = setcfg_body(s, body, dly);
         log_hex_prefix("avdtp: SET_CONFIGURATION body", body, n, 32);
-        log_line("avdtp: SBC config %02x %02x bitpool %u-%u (freq %s, mode %s, "
-                 "blocks %s, subbands %s, alloc %s)",
-                 s->sbc_cfg[0], s->sbc_cfg[1], s->sbc_cfg[2], s->sbc_cfg[3],
-                 (s->sbc_cfg[0] & 0x10) ? "48k" : (s->sbc_cfg[0] & 0x20) ? "44.1k" : "?",
-                 (s->sbc_cfg[0] & 0x01) ? "joint" : (s->sbc_cfg[0] & 0x02) ? "stereo" :
-                 (s->sbc_cfg[0] & 0x04) ? "dual" : "mono",
-                 (s->sbc_cfg[1] & 0x10) ? "16" : (s->sbc_cfg[1] & 0x20) ? "12" :
-                 (s->sbc_cfg[1] & 0x40) ? "8" : "4",
-                 (s->sbc_cfg[1] & 0x04) ? "8" : "4",
-                 (s->sbc_cfg[1] & 0x01) ? "loudness" : "snr");
+        if (s->codec.codec == HB_CODEC_APTX)
+            log_line("avdtp: aptX config on SEP %d (48 kHz, stereo)", s->sink.seid);
+        else
+            log_line("avdtp: SBC config %02x %02x bitpool %u-%u (freq %s, mode %s, "
+                     "blocks %s, subbands %s, alloc %s)",
+                     s->sbc_cfg[0], s->sbc_cfg[1], s->sbc_cfg[2], s->sbc_cfg[3],
+                     (s->sbc_cfg[0] & 0x10) ? "48k" : (s->sbc_cfg[0] & 0x20) ? "44.1k" : "?",
+                     (s->sbc_cfg[0] & 0x01) ? "joint" : (s->sbc_cfg[0] & 0x02) ? "stereo" :
+                     (s->sbc_cfg[0] & 0x04) ? "dual" : "mono",
+                     (s->sbc_cfg[1] & 0x10) ? "16" : (s->sbc_cfg[1] & 0x20) ? "12" :
+                     (s->sbc_cfg[1] & 0x40) ? "8" : "4",
+                     (s->sbc_cfg[1] & 0x04) ? "8" : "4",
+                     (s->sbc_cfg[1] & 0x01) ? "loudness" : "snr");
         msg = avdtp_cmd(s, AV_SET_CONFIGURATION, body, n, rsp, (int)sizeof rsp, &rsp_len);
         if (msg != AV_MSG_ACCEPT && s->delay_on) {
             log_line("avdtp: configuration with delay reporting refused — retrying without");
-            n -= 2;
-            s->delay_on = 0;
+            dly = 0;
+            n = setcfg_body(s, body, dly);
             msg = avdtp_cmd(s, AV_SET_CONFIGURATION, body, n, rsp, (int)sizeof rsp, &rsp_len);
         }
-        if (msg != AV_MSG_ACCEPT && s->codec.codec != HB_CODEC_SBC && pick_sbc_config(s, HB_CODEC_SBC)) {
-            /* The sink refused the high-quality flavour: plain SBC. */
+        if (msg != AV_MSG_ACCEPT && s->codec.codec != HB_CODEC_SBC && pick_codec(s, HB_CODEC_SBC)) {
+            /* The sink refused the high-quality flavour (or aptX): plain SBC,
+             * on the SBC SEP. */
             log_line("avdtp: %s refused — falling back to SBC", s->want_codec == HB_CODEC_AUTO ? "auto pick" : "requested codec");
-            memcpy(body + co, s->sbc_cfg, 4);
+            n = setcfg_body(s, body, dly);
             msg = avdtp_cmd(s, AV_SET_CONFIGURATION, body, n, rsp, (int)sizeof rsp, &rsp_len);
         }
-        if (msg != AV_MSG_ACCEPT && s->sbc_cfg[2] != s->sbc_cfg[3]) {
+        if (msg != AV_MSG_ACCEPT && s->codec.codec != HB_CODEC_APTX && s->sbc_cfg[2] != s->sbc_cfg[3]) {
             /* Some sinks only take a single bitpool: retry fixed (no adaptation). */
             log_line("avdtp: bitpool range %u-%u refused — retrying with fixed bitpool %d",
                      s->sbc_cfg[2], s->sbc_cfg[3], s->bitpool);
             s->sbc_cfg[2] = s->sbc_cfg[3] = (unsigned char)s->bitpool;
-            memcpy(body + co, s->sbc_cfg, 4);
+            n = setcfg_body(s, body, dly);
             msg = avdtp_cmd(s, AV_SET_CONFIGURATION, body, n, rsp, (int)sizeof rsp, &rsp_len);
         }
         if (msg != AV_MSG_ACCEPT) {
             log_line("avdtp: configuration refused");
             return 0;
         }
-        s->bitpool_lo = s->sbc_cfg[2];
-        s->bitpool_hi = s->sbc_cfg[3];
+        if (s->codec.codec == HB_CODEC_APTX) {
+            s->bitpool_lo = s->bitpool_hi = 0;   /* fixed rate: nothing to adapt */
+        } else {
+            s->bitpool_lo = s->sbc_cfg[2];
+            s->bitpool_hi = s->sbc_cfg[3];
+        }
         s->configured = 1;
     }
 
@@ -740,7 +830,7 @@ start_step:
         log_line("avdtp: start status %d, streaming anyway", msg);
     }
     s->streaming = 1;
-    log_line("avdtp: streaming SBC %d Hz, bitpool %d",
+    log_line("avdtp: streaming %s %d Hz, bitpool %d", s->codec.name ? s->codec.name : "SBC",
              s->sink.sample_rate, s->bitpool);
     return 1;
 }
@@ -846,7 +936,7 @@ int avdtp_switch_codec(avdtp_session *s, int want_codec, int no_xq)
     s->no_xq = no_xq;
     s->rtp_seq = 1;
     s->rtp_ts = 0;
-    if (!pick_sbc_config(s, want_codec) && !pick_sbc_config(s, HB_CODEC_SBC))
+    if (!pick_codec(s, want_codec) && !pick_codec(s, HB_CODEC_SBC))
         return 0;
     return configure_and_start(s);
 }
