@@ -269,16 +269,20 @@ static int g_have_cown;
 /* Handles of our links, learned here from Connection Complete (acl_track's
  * own-handle field is almost never filled in). */
 static int g_own_h = -1, g_cown_h = -1;
+static long g_page_until;        /* our page / accept is out until then (see own_conn_pending) */
 static unsigned own_handle_any(void)
 {
     if (g_have_cown && g_cown_h >= 0) return (unsigned)g_cown_h;
     if (g_have_own && g_own_h >= 0) return (unsigned)g_own_h;
     return 0;
 }
-/* Connection Complete (ACL, success): remember the handle if it is ours. */
+/* Connection Complete (ACL, success): remember the handle if it is ours.
+ * Any answer to our page, a failed one too, ends the page window: a link
+ * closing after that is not taken for ours. */
 static void own_conn_event(const unsigned char *ev, int n)
 {
     int h;
+    if (n >= 11 && ev[0] == 0x03 && g_have_cown && !memcmp(ev + 5, g_cown, 6)) g_page_until = 0;
     if (n < 13 || ev[0] != 0x03 || ev[2] != 0 || ev[11] != 0x01) return;
     h = ((int)ev[3] | ((int)ev[4] << 8)) & 0x0FFF;
     if (g_have_cown && !memcmp(ev + 5, g_cown, 6)) g_cown_h = h;
@@ -352,7 +356,6 @@ static long g_conn_until;
  * system can read that event instead (shared pipe) and hang up on a link it
  * never asked for: a link closing now is most likely ours, not a pad's. */
 enum { HB_PAGE_MS = 10000 };
-static long g_page_until;
 static int own_conn_pending(void)
 {
     return g_have_cown && g_cown_h < 0 && now_ms() < g_page_until;
