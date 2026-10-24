@@ -619,6 +619,11 @@ static int inquiry_scan_off(a2dp_session *s, a2dp_inq_dev *out, int max, int *nf
 #define HEADSET_INI "/data/hearbridge/headset.ini"
 #define T_PAIR_CONN_MS    8000
 #define T_PAIR_SETUP_MS  10000
+/* Our new link hung up by the system before we saw it come up (its
+ * Connection Complete read by the system stack): page again after the
+ * short pause hci_usb takes (HB_YIELD_PAGE_MS), at most this often. */
+#define PAIR_REPAGES        2
+#define T_PAIR_REPAGE_MS 3500
 
 /* Only headphones and speakers are listed (hb_dev_rank): headphones / headsets first,
  * then speakers / portable audio, hands-free and headphone-like names. A2DP Sink support is confirmed later via SDP 0x110B. */
@@ -781,6 +786,8 @@ static int pair_paged(a2dp_session *s, const a2dp_inq_dev *target, a2dp_pair_res
     int purged = 0;
     int rc = 0;
     int inbound = 0, io_replied = 0, io_resp = 0;
+    int repages = 0, repaged = 0;
+    long repage_at = 0;
 
     if (!s || !target || !out) return 0;
     memset(out, 0, sizeof *out);
@@ -869,7 +876,13 @@ static int pair_paged(a2dp_session *s, const a2dp_inq_dev *target, a2dp_pair_res
                 } else if (rop == HB_OP_CREATE_CONNECTION) {
                     if (ev[2] == 0) {
                         create_status_ok = 1;
+                        repaged = 0;
                         log_line("pair: CREATE_CONNECTION accepted");
+                    } else if (repaged) {
+                        /* 0x0b / 0x0c: the first page was still going (the
+                         * link that closed was not ours): wait for it. */
+                        log_line("pair: paging again refused (%#04x) - the first page is still going, waiting for it", ev[2]);
+                        repaged = 0;
                     } else if (ev[2] == 0x0B && !purged) {
                         log_line("pair: ACL already exists — drop + retry once");
                         purged = 1;
@@ -930,6 +943,21 @@ static int pair_paged(a2dp_session *s, const a2dp_inq_dev *target, a2dp_pair_res
                 t_conn = now_ms();
                 out->handle = handle;
                 log_line("pair: ACL up handle %#05x", handle);
+                continue;
+            }
+
+            /* A link closes before ours came up: most likely ours, its
+             * Connection Complete read by the system stack, which hung up on
+             * it (hci_usb pauses only briefly then). Page again. */
+            if (ev[0] == 0x05 && nEv >= 6 && !connected && !inbound && !repage_at) {
+                if (repages < PAIR_REPAGES) {
+                    repage_at = now_ms() + T_PAIR_REPAGE_MS;
+                    log_line("pair: link %#05x closed before ours came up (reason %#04x) - paging again in %d ms",
+                             (int)(le16(ev + 3) & 0x0FFF), ev[5], T_PAIR_REPAGE_MS);
+                } else {
+                    log_line("pair: link %#05x closed before ours came up again - no more pages",
+                             (int)(le16(ev + 3) & 0x0FFF));
+                }
                 continue;
             }
 
@@ -1033,6 +1061,19 @@ static int pair_paged(a2dp_session *s, const a2dp_inq_dev *target, a2dp_pair_res
          * or info request) queued for btlink instead of discarding them. */
         if (!(a2dp_pair_keep_acl && connected)) drain_acl(hci);
 
+        if (repage_at && now >= repage_at) {
+            repage_at = 0;
+            if (!connected) {
+                repages++;
+                log_line("pair: CREATE_CONNECTION again (%d of %d)", repages, PAIR_REPAGES);
+                if (hci.ops->cmd(hci.ctx, HB_OP_CREATE_CONNECTION, p, 13)) {
+                    repaged = 1;
+                    t0 = now_ms();
+                    deadline = t0 + T_PAIR_CONN_MS + T_PAIR_SETUP_MS;
+                }
+            }
+        }
+
         /* Drive auth / encrypt per link state (pairing: no delay). */
         if (connected && !auth_ok && !auth_sent) {
             put16(p, (unsigned)handle);
@@ -1054,7 +1095,7 @@ static int pair_paged(a2dp_session *s, const a2dp_inq_dev *target, a2dp_pair_res
         }
 
         /* Timeouts */
-        if (create_sent && !connected && now - t0 > T_PAIR_CONN_MS) {
+        if (create_sent && !connected && !repage_at && now - t0 > T_PAIR_CONN_MS) {
             log_line("pair: connection timeout");
             break;
         }

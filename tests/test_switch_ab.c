@@ -26,6 +26,7 @@ static unsigned ops[256]; static unsigned char opargs[256][16]; static int nops;
 static unsigned next_handle = 2;
 static int swallow_disc;          /* Disconnection Complete read by someone else */
 static int drop_accept;           /* the headset hangs up right after our accept */
+static int lose_page;             /* the system reads our Connection Complete and hangs up */
 
 static void push(const unsigned char *e, int n)
 {
@@ -41,7 +42,11 @@ static int f_cmd(void *s, unsigned op, const void *a, int n)
     const unsigned char *p = a;
     (void)s;
     if (nops < 256) { ops[nops] = op; memset(opargs[nops], 0, 16); if (n > 0) memcpy(opargs[nops], p, (size_t)(n > 16 ? 16 : n)); nops++; }
-    if (op == 0x0405) {                                  /* Create Connection */
+    if (op == 0x0405 && lose_page) {                     /* page answered, link hung up by the system */
+        unsigned char d[6] = { 0x05, 4, 0, (unsigned char)next_handle, 0, 0x13 };
+        cstatus(op); push(d, 6); next_handle++;
+        lose_page = 0;
+    } else if (op == 0x0405) {                           /* Create Connection */
         unsigned char e[13] = { 0x03, 11, 0, (unsigned char)next_handle, 0 };
         cstatus(op); memcpy(e + 5, p, 6); e[11] = 1; e[12] = 0; push(e, 13); next_handle++;
     } else if (op == 0x0411) {                           /* Authentication Requested */
@@ -255,6 +260,24 @@ int main(void)
         btlink_destroy(b);
         btlink_abort_connect = NULL;
         real_pump = 0;
+        alarm(0);
+    }
+    /* The system reads our Connection Complete and hangs up on the new link
+     * (Sonic Sub 630 log): a Disconnection Complete for a handle we never
+     * saw while our page is out. We page again and the link comes up. */
+    {
+        signal(SIGALRM, hung);
+        alarm(20);
+        a = btlink_create(hci, 1021, 7);
+        strcpy(nm, "A");
+        mark = nops;
+        lose_page = 1;
+        CHECK(btlink_connect(a, A, 1, 0, key, 4, nm, sizeof nm, 10000) && btlink_is_up(a),
+              "lost page: paged again, link up");
+        CHECK(count_op(mark, 0x0405) == 2, "lost page: exactly one page again");
+        CHECK(count_op(mark, 0x0406) == 0, "lost page: nothing disconnected by us");
+        btlink_disconnect(a);
+        btlink_destroy(a);
         alarm(0);
     }
     printf(fails ? "FAILED (%d)\n" : "ALL OK (0 failures)\n", fails);

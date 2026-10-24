@@ -169,6 +169,9 @@ struct btlink {
     int pending_disc_done;
     int need_drop; /* set in on_event on 0x0b; connect loop performs drop */
     int cc_fail;   /* Connection Complete failure status (not 0x0b) */
+    int lost_page;  /* a link closed while our page was out, before ours came up */
+    int lost_pages; /* pages sent again for that (2 at most) */
+    int repaged;    /* the last CREATE_CONNECTION was such a page again */
     /* Incoming connections (btlink_accept): saved devices we accept. */
     int acc_n, acc_got;
     int acc_dropped;      /* the accepted ACL came up and went down before encryption */
@@ -1302,6 +1305,12 @@ static void on_event(btlink *l, const unsigned char *ev, int nEv)
         if (rop == HB_OP_CREATE_CONNECTION) {
             if (ev[2] == 0) {
                 log_line("btlink: CREATE_CONNECTION accepted");
+                l->repaged = 0;
+            } else if (l->repaged) {
+                /* 0x0b / 0x0c: the first page was still going (the link that
+                 * closed was not ours): wait for it. */
+                log_line("btlink: paging again refused (%#04x) - the first page is still going, waiting for it", ev[2]);
+                l->repaged = 0;
             } else if (ev[2] == 0x0B) {
                 log_line("btlink: ACL already exists (cmd-status) — schedule drop + retry");
                 l->need_drop = 1;
@@ -1436,6 +1445,14 @@ static void on_event(btlink *l, const unsigned char *ev, int nEv)
 
     if (ev[0] == 0x05 && nEv >= 6) {
         unsigned dh = le16(ev + 3) & 0x0FFF;
+        if (!l->connected && g_paging && !l->acc_got && l->lost_pages < 2 &&
+            !(l->pending_disc && dh == (l->pending_disc & 0x0FFF))) {
+            /* A link closes while our page is out, before ours came up:
+             * most likely ours, its Connection Complete read by the system,
+             * which hung up on it. The connect loop pages again. */
+            l->lost_page = 1;
+            log_line("btlink: link %#05x closed before ours came up (reason %#04x) - probably ours", dh, ev[5]);
+        }
         if (l->pending_disc && dh == (l->pending_disc & 0x0FFF)) {
             l->pending_disc_done = 1;
             log_line("btlink: disconnected (reason %#04x) pending %#05x",
@@ -1788,6 +1805,7 @@ static void link_reset(btlink *l)
     l->retry_create = l->create_retries = l->purge_fail = 0;
     l->need_drop = 0;
     l->cc_fail = 0;
+    l->lost_page = l->lost_pages = l->repaged = 0;
     l->acc_dropped = 0;
     l->drop_hint = 0;
     l->pending_disc = 0;
@@ -1983,6 +2001,7 @@ static int connect_paged(btlink *l, const unsigned char addr[6],
     l->purge_fail = 0;
     l->need_drop = 0;
     l->cc_fail = 0;
+    l->lost_page = l->lost_pages = l->repaged = 0;
     g_connect_fail = 0;
     g_disc_reason = 0;
     l->drop_hint = 0;
@@ -2060,6 +2079,24 @@ static int connect_paged(btlink *l, const unsigned char addr[6],
 
     while (now_ms() < deadline) {
         if (btlink_pump(l, 40) < 0) { page_gone(l); return 0; }
+
+        /* Our new link hung up by the system before we saw it (on_event):
+         * page again once hci_usb's short pause (HB_YIELD_PAGE_MS) is over. */
+        if (!l->connected && l->lost_page) {
+            long w = now_ms() + 3500;
+            l->lost_page = 0;
+            while (now_ms() < w && !l->connected)
+                if (btlink_pump(l, 40) < 0) { page_gone(l); return 0; }
+            if (!l->connected && l->lost_pages < 2) {
+                l->lost_pages++;
+                log_line("btlink: CREATE_CONNECTION again (%d of 2)", l->lost_pages);
+                if (!l->hci.ops->cmd(l->hci.ctx, HB_OP_CREATE_CONNECTION, p, 13))
+                    return 0;
+                g_paging = 1;
+                l->repaged = 1;
+                t0 = now_ms();
+            }
+        }
 
         /* After 0x0b: drop known handles, wait Disc Complete, settle, retry
          * CREATE once (max 2 attempts total). Never infinite errno-5 loop. */

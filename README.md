@@ -35,11 +35,12 @@ BossQuickDock is a modified build of HearBridge PS5, released under the same lic
 - **aptX** (1.1.0) for headsets with a Qualcomm aptX decoder: pick **aptX** under System → Codec. It only lights up when the connected headset advertises aptX at 48 kHz stereo; Auto stays plain SBC. The encoder is a port of FFmpeg's (byte-for-byte identical output, checked by `make test-aptx`).
 - **Low battery on screen** (1.1.0): a console notification at 20 % and 10 %, not only on the control page; "connection lost" now names the headset.
 - Built with PS5 Payload SDK v0.45 (adds firmware 14.00 / 14.10 kernel offsets).
+- **Pairing retries** (1.1.1): when the console's own Bluetooth stack takes the "connected" event of a new link and hangs up on it, the app pages the device again after a 2 s pause, instead of stepping aside for 45 s and timing out.
 
 ## Install
 
-1. Jailbreak your PS5 and run an ELF loader (tested on firmware 13.60).
-2. Send `BossQuickDock-1.1.0.elf` to the console (for example, copy it to `/data/pldmgr/payloads/local` and launch it from your payload manager).
+1. Jailbreak your PS5 and run an ELF loader (tested on firmware 13.60; 14.00 / 14.10 supported by the SDK, not tested yet).
+2. Send `BossQuickDock-1.1.1.elf` to the console (for example, copy it to `/data/pldmgr/payloads/local` and launch it from your payload manager).
 3. Open the **BossQuickDock** tile on the home screen, or browse to `http://<console-ip>:8090` from a phone or PC.
 4. Put your headphones in pairing mode and press **Scan for devices**.
 

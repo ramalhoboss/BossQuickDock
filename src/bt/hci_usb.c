@@ -348,6 +348,16 @@ static long g_yield_until2;               /* mirror of the yield (declared befor
 enum { HB_CONN_MS = 30000 };
 static long g_conn_until;
 
+/* Our page / accept is out and its Connection Complete not read yet. The
+ * system can read that event instead (shared pipe) and hang up on a link it
+ * never asked for: a link closing now is most likely ours, not a pad's. */
+enum { HB_PAGE_MS = 10000 };
+static long g_page_until;
+static int own_conn_pending(void)
+{
+    return g_have_cown && g_cown_h < 0 && now_ms() < g_page_until;
+}
+
 static int is_own_handle(int h)
 {
     if (g_have_own && g_own_h >= 0 && h == g_own_h) return 1;
@@ -597,8 +607,15 @@ static void cmd_reply_seen(const unsigned char *ev, int n)
             g_replay_op = op;
             g_replay_tries = 0;
         }
-        /* the system is busy with something (a pad, most likely): step aside */
-        hci_usb_yield(g_hint_stream ? HB_YIELD_STREAM_MS : HB_YIELD_IDLE_MS);
+        /* the system is busy with something (a pad, most likely): step aside.
+         * Its Disconnect while our page is out is most likely for our own new
+         * link (see reap): off only until the replay is done. */
+        if (op == OP_DISCONNECT && own_conn_pending()) {
+            log_line("hci_usb: the system hung up a link while our page was out - probably ours");
+            hci_usb_yield(HB_YIELD_PAGE_MS);
+        } else {
+            hci_usb_yield(g_hint_stream ? HB_YIELD_STREAM_MS : HB_YIELD_IDLE_MS);
+        }
         return;
     }
     /* Command Complete ends our command: stop reading everything now
@@ -640,6 +657,13 @@ static int reap(struct usb_hci *u)
                 if (dh >= 0 && is_own_handle(dh)) {
                     if (dh == g_own_h) g_own_h = -1;            /* our link is gone */
                     if (dh == g_cown_h) g_conn_until = 0, g_have_cown = 0, g_cown_h = -1;
+                } else if (dh >= 0 && own_conn_pending()) {
+                    /* A link we never saw come up, closed while our page is
+                     * out: most likely ours (its Connection Complete went to
+                     * the system). A short pause, then the pairing / btlink
+                     * pages again. */
+                    log_line("hci_usb: link %#05x closed while our page was out - probably ours, its Connection Complete went to the system", dh);
+                    hci_usb_yield(HB_YIELD_PAGE_MS);
                 } else if (dh >= 0) {
                     /* Not our link going down (a pad turning off, sleeping
                      * or losing range): its call-back must reach only the
@@ -742,6 +766,10 @@ void hci_usb_yield(int ms)
 static int yield_step(struct usb_hci *u)
 {
     int k;
+    /* A replay still waiting keeps the reads off (a short yield can end
+     * before every read is empty): its answer must reach only the system. */
+    if (g_yielding && g_replay_op && now_ms() >= g_yield_until)
+        g_yield_until = g_yield_until2 = now_ms() + 100;
     if (now_ms() < g_yield_until) {
         if (!g_yielding) {
             g_yielding = 1;               /* reap stops re-arming */
@@ -818,6 +846,7 @@ static int op_cmd(void *self, unsigned op, const void *args, int nargs)
         g_have_cown = 1;
         g_cown_h = -1;
         g_conn_until = now_ms() + HB_CONN_MS;
+        g_page_until = now_ms() + HB_PAGE_MS;
     }
     /* Idle keeps no read armed: arm them before the command goes out, or
      * its Command Complete may reach only the system. */

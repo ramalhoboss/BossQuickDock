@@ -30,6 +30,10 @@ void hci_usb_yield(int ms);
  * or drops: long enough for a pad's page, pairing and encryption setup. */
 #define HB_YIELD_IDLE_MS   45000
 #define HB_YIELD_STREAM_MS 45000
+/* A link we never saw come up closes while our own page is out: most likely
+ * ours, its Connection Complete read by the system, which hung up on it.
+ * Off only until the system has its answer (replay), then we page again. */
+#define HB_YIELD_PAGE_MS   2000
 
 /* Our own link's address (NULL when we have none): a Disconnection
  * Complete for any other handle makes us step aside (hci_usb_yield). */
