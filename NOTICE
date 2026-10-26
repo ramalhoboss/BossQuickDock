@@ -15,6 +15,9 @@ battery notification on the console, PS5 Payload SDK v0.45, CI.
 Changes by RamalhoBoss (2026-10-24, 1.1.1): a new link the system stack
 hangs up on while we page it is paged again (2 s pause, not 45 s).
 
+Changes by RamalhoBoss (2026-10-26, 1.1.2): the home-screen tile carries a
+logo background (sce_sys/pic0.png, pic1.png) shown while it is selected.
+
 src/a2dp/aptx_enc.c is a port of FFmpeg's aptX encoder (libavcodec/aptx.c,
 aptxenc.c), Copyright (C) 2017 Aurelien Jacobs, licensed under the GNU
 LGPL 2.1 or later and used here under GPL-3.0-or-later.
