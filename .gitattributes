@@ -1,6 +1,7 @@
 # Keep the GitHub language bar on the payload's own code.
 # Generated headers (built from assets and the web UI by scripts/gen_*.py)
 src/icon_png.h linguist-generated
+src/pic_png.h linguist-generated
 src/webpage.h linguist-generated
 src/font_woff2.h linguist-generated
 src/start_html.h linguist-generated

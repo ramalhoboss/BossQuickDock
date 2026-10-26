@@ -1,7 +1,7 @@
-# HearBridge PS5: Bluetooth headphones (A2DP) on a jailbroken PS5.
+# BossQuickDock: Bluetooth headphones (A2DP) on a jailbroken PS5.
 #
 #   make test                 host tests (cc, ffmpeg, python3 + numpy)
-#   make ps5                  builds dist/HearBridge-<version>.elf
+#   make ps5                  builds dist/BossQuickDock-<version>.elf
 #   make send PS5_HOST=ip     builds and sends it to the console's ELF loader
 #
 # PS5_PAYLOAD_SDK must point at an unpacked ps5-payload-sdk release
@@ -81,6 +81,8 @@ test-tile:
 	@mkdir -p $(BUILD)/host
 	python3 scripts/gen_icon.py assets/icon0.png $(BUILD)/host/icon_png.h
 	cmp -s $(BUILD)/host/icon_png.h src/icon_png.h || (echo "src/icon_png.h is stale: make icon"; false)
+	python3 scripts/gen_pic.py assets/pic0.png $(BUILD)/host/pic_png.h
+	cmp -s $(BUILD)/host/pic_png.h src/pic_png.h || (echo "src/pic_png.h is stale: make icon"; false)
 	python3 scripts/gen_start.py src/web/start.html $(BUILD)/host/start_html.h
 	cmp -s $(BUILD)/host/start_html.h src/start_html.h || (echo "src/start_html.h is stale: make icon"; false)
 	cc -std=c11 -Wall -Wextra -O2 -Isrc tests/test_tile.c src/tile.c -o $(BUILD)/host/test_tile
@@ -100,7 +102,9 @@ test-devices:
 
 icon:
 	@echo "icon0.png comes from assets/brand/icon-src.jpg (BossQuickDock logo)"
+	@echo "pic0.png (tile background) comes from assets/brand/logo-src.jpg: sh scripts/gen_pic.sh (needs ffmpeg)"
 	python3 scripts/gen_icon.py assets/icon0.png src/icon_png.h
+	python3 scripts/gen_pic.py assets/pic0.png src/pic_png.h
 	python3 scripts/gen_start.py src/web/start.html src/start_html.h
 
 test: test-sbc test-aptx test-dump test-crypto test-control test-tile test-devices test-rate test-acl test-mtu test-track test-pace test-diag test-reinstall test-page test-link test-prefs test-eq test-cswitch test-rejoin test-forgot test-switch test-connreq test-cfg test-chip test-night test-alerts test-linkq test-gameprof test-backup test-hfp test-linktune test-txpath

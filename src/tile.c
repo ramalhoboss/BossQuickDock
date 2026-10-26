@@ -93,23 +93,26 @@ static int ensure_dir(const char *p)
 #define P_FILE (P_SYS + 16)
 
 static void paths(const char *root, char app[P_APP], char sys[P_SYS],
-                  char man[P_FILE], char ico[P_FILE])
+                  char man[P_FILE], char ico[P_FILE], char bg[2][P_FILE])
 {
     snprintf(app, P_APP, "%.200s/%s", root, HB_TILE_ID);
     snprintf(sys, P_SYS, "%s/sce_sys", app);
     snprintf(man, P_FILE, "%s/param.json", sys);
     snprintf(ico, P_FILE, "%s/icon0.png", sys);
+    snprintf(bg[0], P_FILE, "%s/pic0.png", sys);
+    snprintf(bg[1], P_FILE, "%s/pic1.png", sys);
 }
 
 int tile_files_put(const char *root, const char *url,
                    const unsigned char *png, size_t png_len,
+                   const unsigned char *pic, size_t pic_len,
                    const unsigned char *html, size_t html_len)
 {
-    char app[P_APP], sys[P_SYS], man[P_FILE], ico[P_FILE], js[2048], st[P_FILE];
-    int jl, wrote = 0;
+    char app[P_APP], sys[P_SYS], man[P_FILE], ico[P_FILE], bg[2][P_FILE], js[2048], st[P_FILE];
+    int jl, k, wrote = 0;
 
     if ((jl = tile_manifest(js, sizeof js, url)) < 0) return -1;
-    paths(root, app, sys, man, ico);
+    paths(root, app, sys, man, ico, bg);
     if (ensure_dir(app) || ensure_dir(sys)) return -1;
     if (!holds(man, js, (size_t)jl)) {
         if (store(man, js, (size_t)jl)) return -1;
@@ -118,6 +121,10 @@ int tile_files_put(const char *root, const char *url,
     if (!holds(ico, png, png_len)) {
         if (store(ico, png, png_len)) return -1;
         wrote = 1;
+    }
+    for (k = 0; pic && k < 2; k++) {                /* background: best effort */
+        if (!holds(bg[k], pic, pic_len) && store(bg[k], pic, pic_len) == 0)
+            wrote = 1;                              /* read when the title is registered */
     }
     snprintf(st, sizeof st, "%s/start.html", app);
     if (html && !holds(st, html, html_len)) {      /* page only: no re-register needed */
@@ -128,11 +135,13 @@ int tile_files_put(const char *root, const char *url,
 
 void tile_files_drop(const char *root)
 {
-    char app[P_APP], sys[P_SYS], man[P_FILE], ico[P_FILE];
+    char app[P_APP], sys[P_SYS], man[P_FILE], ico[P_FILE], bg[2][P_FILE];
 
-    paths(root, app, sys, man, ico);
+    paths(root, app, sys, man, ico, bg);
     unlink(man);
     unlink(ico);
+    unlink(bg[0]);
+    unlink(bg[1]);
     {
         char st[P_FILE];
         snprintf(st, sizeof st, "%s/start.html", app);
@@ -144,15 +153,20 @@ void tile_files_drop(const char *root)
 
 int tile_files_write(const char *root, const char *url,
                      const unsigned char *png, size_t png_len,
+                     const unsigned char *pic, size_t pic_len,
                      const unsigned char *html, size_t html_len)
 {
-    char app[P_APP], sys[P_SYS], man[P_FILE], ico[P_FILE], js[2048], st[P_FILE];
-    int jl;
+    char app[P_APP], sys[P_SYS], man[P_FILE], ico[P_FILE], bg[2][P_FILE], js[2048], st[P_FILE];
+    int jl, k;
 
     if ((jl = tile_manifest(js, sizeof js, url)) < 0) return -1;
-    paths(root, app, sys, man, ico);
+    paths(root, app, sys, man, ico, bg);
     if (ensure_dir(app) || ensure_dir(sys)) return -1;
     if (store(man, js, (size_t)jl) || store(ico, png, png_len)) return -1;
+    for (k = 0; k < 2; k++) {                       /* background: best effort */
+        if (pic) (void)store(bg[k], pic, pic_len);
+        else unlink(bg[k]);
+    }
     snprintf(st, sizeof st, "%s/start.html", app);
     if (html) { if (store(st, html, html_len)) return -1; }
     else unlink(st);                                /* file:// page of an earlier build */

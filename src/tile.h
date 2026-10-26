@@ -1,7 +1,10 @@
 /* Developed by X-F1REBALL-X.
- * Home-screen tile: a tiny title folder <root>/<id>/sce_sys/{param.json,icon0.png}
- * whose param.json carries a deep link to the control page. The file side lives
- * here (host-testable); tile_sys.c asks the console to register / drop it. */
+ * Home-screen tile: a tiny title folder <root>/<id>/sce_sys/{param.json,icon0.png,
+ * pic0.png,pic1.png} whose param.json carries a deep link to the control page and
+ * whose pic0/pic1 are the background the console shows while the tile is
+ * selected (pic0 home screen, pic1 launch screen; the same logo image for both).
+ * The file side lives here (host-testable); tile_sys.c asks the console to
+ * register / drop it. */
 #ifndef HB_TILE_H
 #define HB_TILE_H
 
@@ -26,7 +29,7 @@
  * in HB_TILE_VER_PATH; a mismatched version triggers uninstall + re-register.
  * Media->Games once left a leftover Media icon when uninstall was skipped or
  * the Shell kept a stale tab entry — version 4 hardens that path. */
-#define HB_TILE_VERSION  "12"  /* 12: new title id BQDK00001, old HRBG00001 removed; 11: renamed BossQuickDock (new name + icon); 10: explanation page stays, silent retries; 9: Checking state shows only title + Checking...; 8: clear offline page; 7: no PS5 on the page; 6: probes; 5: Media + AppCache (#22, #33) */
+#define HB_TILE_VERSION  "13"  /* 13: logo background (pic0/pic1) shown while the tile is selected; 12: new title id BQDK00001, old HRBG00001 removed; 11: renamed BossQuickDock (new name + icon); 10: explanation page stays, silent retries; 9: Checking state shows only title + Checking...; 8: clear offline page; 7: no PS5 on the page; 6: probes; 5: Media + AppCache (#22, #33) */
 #define HB_TILE_VER_PATH "/data/hearbridge/tile.ver"
 
 /* 1 when stored tile version (text of HB_TILE_VER_PATH, NULL if missing)
@@ -48,19 +51,24 @@ int tile_needs_reinstall(const char *stored, int installed);
 int tile_manifest(char *out, size_t cap, const char *url);
 
 /* Create/refresh the folder under root (param.json, icon0.png and, when
- * html is given, start.html). 1 = something written, 0 = already identical,
- * -1 = error. */
+ * given, pic0.png + pic1.png from pic and start.html from html). 1 =
+ * something written, 0 = already identical, -1 = error. The background is
+ * optional: when it cannot be written the tile is still created. */
 int tile_files_put(const char *root, const char *url,
                    const unsigned char *png, size_t png_len,
+                   const unsigned char *pic, size_t pic_len,
                    const unsigned char *html, size_t html_len);
 
 /* Delete exactly what tile_files_put created. */
 void tile_files_drop(const char *root);
 
-/* Write param.json, icon0.png and (when html is given) start.html every
- * time, even when they are already identical. 0 on success, -1 on error. */
+/* Write param.json, icon0.png and (when given) pic0.png + pic1.png and
+ * start.html every time, even when they are already identical; without pic
+ * or html the old file of that kind is removed. 0 on success, -1 on error
+ * (a background that cannot be written is not an error). */
 int tile_files_write(const char *root, const char *url,
                      const unsigned char *png, size_t png_len,
+                     const unsigned char *pic, size_t pic_len,
                      const unsigned char *html, size_t html_len);
 
 /* Where the console keeps the metadata of registered titles. */

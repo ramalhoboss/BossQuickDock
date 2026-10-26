@@ -113,12 +113,12 @@ static void test_tile_register(void)
     memset(&F, 0, sizeof F);
     memset(&r, 0, sizeof r);
     CHECK(mkdtemp(root) != NULL, "deleted: temp root");
-    CHECK(tile_files_put(root, NULL, (const unsigned char *)"PNG", 3, NULL, 0) == 1, "deleted: earlier files");
+    CHECK(tile_files_put(root, NULL, (const unsigned char *)"PNG", 3, NULL, 0, NULL, 0) == 1, "deleted: earlier files");
     snprintf(p, sizeof p, "%s/%s/sce_sys/.hb_registered", root, HB_TILE_ID);
     { FILE *m = fopen(p, "w"); if (m) fclose(m); }
-    CHECK(tile_files_put(root, NULL, (const unsigned char *)"PNG", 3, NULL, 0) == 0,
+    CHECK(tile_files_put(root, NULL, (const unsigned char *)"PNG", 3, NULL, 0, NULL, 0) == 0,
           "deleted: files unchanged (what made 1.0.1 skip)");
-    CHECK(tile_files_write(root, NULL, (const unsigned char *)"PNG", 3, NULL, 0) == 0,
+    CHECK(tile_files_write(root, NULL, (const unsigned char *)"PNG", 3, NULL, 0, NULL, 0) == 0,
           "deleted: files are rewritten anyway");
     CHECK(tile_register(&o, &r) == 0 && F.installed && F.meta && F.n_titledir == 1 && !r.meta_before,
           "deleted: marker ignored, title registered again");

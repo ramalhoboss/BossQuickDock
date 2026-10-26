@@ -18,6 +18,7 @@
 #include "diag.h"
 #include "icon_png.h"
 #include "log.h"
+#include "pic_png.h"
 
 #include <ps5/kernel.h>
 
@@ -195,7 +196,7 @@ int tile_install(const char *url, tile_report *rep)
     }
     errno = 0;
     if (tile_files_write(HB_TILE_ROOT, url, hb_icon_png, sizeof hb_icon_png,
-                         NULL, 0) != 0) {
+                         hb_pic_png, sizeof hb_pic_png, NULL, 0) != 0) {
         r->files_failed = 1;
         r->files_errno = errno;
         log_line("tile: cannot write %s/%s (errno %d)", HB_TILE_ROOT, HB_TILE_ID, r->files_errno);
