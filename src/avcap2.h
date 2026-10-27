@@ -25,4 +25,8 @@ int avcap2_probe(void);
 int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
                             float *peak_abs);
 
+/* Reads that got OVERRUN: capture fell a whole ring behind and that audio
+ * was skipped. 0 for NULL. */
+uint64_t avcap2_session_overruns(const avcap2_session *s);
+
 #endif

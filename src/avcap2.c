@@ -1,6 +1,6 @@
 /* HearBridge — system audio capture through libSceAvcap2 (48 kHz stereo).
  *
- * NIDs + OpenAudio ABI: 16-byte meta, buflen=0x2000, no authid elevation
+ * NIDs + OpenAudio ABI: 16-byte meta, buflen=0x10000, no authid elevation
  * by default, restart on the sticky 0x81950001 status.
  */
 #include "avcap2.h"
@@ -38,8 +38,11 @@
 #define META_SIZE       0x10
 #define SAMPLE_RATE     48000
 #define CHANNELS        2
-/* capture_read(buf, 0x2000) → ReadAudio buflen=8192. */
-#define READ_BYTES      0x2000
+/* ReadAudio hands over one whole packet per call. A packet bigger than
+ * buflen gets 0x81950001 and the library does not move past it, so the
+ * same error comes back on every read. Packets are 1024 frames (8 KB of
+ * stereo float); 64 KB also holds 1024 frames of 12-channel float. */
+#define READ_BYTES      0x10000
 
 /* No authid elevation needed for Avcap2 capture. We try default first. */
 #define AUTHID_AVCAP2   0x4900000000000002ULL
@@ -255,8 +258,12 @@ struct avcap2_session {
     int dead;
     uint64_t reads_ok;
     uint64_t reads_empty;
+    uint64_t reads_overrun;
     uint64_t reads_invalid;
     uint64_t reads_other;
+    /* Part of the last packet not handed out yet (bytes into buf). */
+    int pend_off;
+    int pend_bytes;
     int logged_first;
     /* Detected layout of the capture buffer. Defaults: float32, 2 ch. */
     int fmt_s16;          /* 1 = int16 samples, 0 = float32 */
@@ -384,6 +391,52 @@ void avcap2_session_close(avcap2_session *s)
     free(s);
 }
 
+uint64_t avcap2_session_overruns(const avcap2_session *s)
+{
+    return s ? s->reads_overrun : 0;
+}
+
+/* Converts up to max_frames of the packet still held in buf to s16 stereo
+ * (L/R = first two channels). What does not fit stays for the next call,
+ * so a packet longer than max_frames is not cut. Returns frames. */
+static int take_pending(avcap2_session *s, int16_t *out, int max_frames,
+                        float *peak_abs)
+{
+    int bpsamp = s->fmt_s16 ? 2 : 4, nch = s->nch > 0 ? s->nch : 2, f;
+    int frame_bytes = nch * bpsamp;
+    const unsigned char *src = (const unsigned char *)s->buf + s->pend_off;
+    const int16_t *si = (const int16_t *)(const void *)src;
+    const float *sf = (const float *)(const void *)src;
+    float peak = 0.f;
+    int frames = s->pend_bytes / frame_bytes;
+
+    if (frames > max_frames) frames = max_frames;
+    for (f = 0; f < frames; f++) {
+        int c;
+        for (c = 0; c < 2; c++) {
+            float v, a;
+            int sample;
+            if (s->fmt_s16) v = (float)si[f * nch + c] / 32768.f;
+            else v = sf[f * nch + c];
+            if (!(v == v) || v > 1e30f || v < -1e30f) { /* NaN / inf */
+                s->nonfinite++;
+                v = 0.f;
+            }
+            if (v > 1.f) v = 1.f;
+            if (v < -1.f) v = -1.f;
+            a = v < 0 ? -v : v;
+            if (a > peak) peak = a;
+            sample = (int)(v * 32767.f);
+            out[f * 2 + c] = (int16_t)sample;
+        }
+    }
+    s->pend_off += frames * frame_bytes;
+    s->pend_bytes -= frames * frame_bytes;
+    if (s->pend_bytes < frame_bytes) s->pend_bytes = 0;   /* partial frame */
+    if (peak_abs) *peak_abs = peak;
+    return frames;
+}
+
 int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
                             float *peak_abs)
 {
@@ -395,6 +448,8 @@ int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
 
     if (peak_abs) *peak_abs = 0.f;
     if (!s || !out || max_frames <= 0 || s->dead) return -1;
+    if (s->pend_bytes > 0)
+        return take_pending(s, out, max_frames, peak_abs);
     fill_meta(meta);
     if (!s->logged_first) {
         log_line("avcap2: before first stream ReadAudio (buflen=%#x meta=%#x flag=%d)",
@@ -458,31 +513,9 @@ int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
                 s->nch = newch;
             }
         }
-        {
-            int bpsamp = s->fmt_s16 ? 2 : 4, nch = s->nch > 0 ? s->nch : 2, f;
-            const int16_t *si = (const int16_t *)(void *)s->buf;
-            frames = got / (nch * bpsamp);
-            if (frames > max_frames) frames = max_frames;
-            for (f = 0; f < frames; f++) {
-                int c;
-                for (c = 0; c < 2; c++) {
-                    float v, a;
-                    int sample;
-                    if (s->fmt_s16) v = (float)si[f * nch + c] / 32768.f;
-                    else v = s->buf[f * nch + c];
-                    if (!(v == v) || v > 1e30f || v < -1e30f) { /* NaN / inf */
-                        s->nonfinite++;
-                        v = 0.f;
-                    }
-                    if (v > 1.f) v = 1.f;
-                    if (v < -1.f) v = -1.f;
-                    a = v < 0 ? -v : v;
-                    if (a > peak) peak = a;
-                    sample = (int)(v * 32767.f);
-                    out[f * 2 + c] = (int16_t)sample;
-                }
-            }
-        }
+        s->pend_off = 0;
+        s->pend_bytes = got;
+        frames = take_pending(s, out, max_frames, &peak);
         s->last_ok_ms = now;
         s->reads_ok++;
         if (s->reads_ok <= 3 || (s->reads_ok % 50) == 0)
@@ -492,11 +525,19 @@ int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
         if (peak_abs) *peak_abs = peak;
         return frames;
     }
-    if ((unsigned)got == AVCAP2_EMPTY || (unsigned)got == AVCAP2_OVERRUN) {
+    if ((unsigned)got == AVCAP2_EMPTY) {
         s->reads_empty++;
         if (s->reads_empty <= 3 || (s->reads_empty % 200) == 0)
-            log_line("avcap2: Read empty/over #%llu rv=%#x",
-                     (unsigned long long)s->reads_empty, (unsigned)got);
+            log_line("avcap2: Read empty #%llu", (unsigned long long)s->reads_empty);
+        return 0;
+    }
+    if ((unsigned)got == AVCAP2_OVERRUN) {
+        /* We fell more than the capture ring (~340 ms of stereo) behind:
+         * the library moved us to the newest packet, the rest is lost. */
+        s->reads_overrun++;
+        if (s->reads_overrun <= 8 || (s->reads_overrun % 50) == 0)
+            log_line("avcap2: Read OVERRUN #%llu (audio skipped)",
+                     (unsigned long long)s->reads_overrun);
         return 0;
     }
     if ((unsigned)got == AVCAP2_ENDED) {

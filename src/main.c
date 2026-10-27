@@ -86,7 +86,7 @@
 #define CHIP_PATH STATE_DIR "/chip"            /* optional: "mediatek" or "marvell" forces the chip profile */
 #define DUMP_PKTS 200
 
-#define PCM_CAP_FRAMES  1024  /* matches Avcap2 READ_BYTES / (2*sizeof float) */
+#define PCM_CAP_FRAMES  1024  /* one Avcap2 packet: 1024 frames (21.3 ms) */
 
 static const char g_version_tag[] __attribute__((used)) =
     "bossquickdock-version " HEARBRIDGE_VERSION;
@@ -2350,6 +2350,7 @@ static int run_session(a2dp_session *asess, hci_t hci, headset_ini *ini)
     int16_t pcm[PCM_CAP_FRAMES * 2];
     int rc = RUN_FAIL, r = 0;
     long t_start, t_stat, samples = 0, reads_ok = 0, reads_empty = 0;
+    long fills = 0;                    /* silence chunks sent for missing capture */
     double tone_phase = 0.0, sine_phase = 0.0;
     float peak_seen = 0.f;
     int tone = 0, tone_file = 0, gain_milli = 1000, out_peak = 0, gain_pct, muted;
@@ -2888,6 +2889,7 @@ stream_setup:
             if (nframes == 0) reads_empty++;
             if (ahead_ms > 0) { usleep(1000); continue; }
             nframes = PCM_CAP_FRAMES / 4;      /* silence keeps the sink fed */
+            fills++;
             fill_tone_s16(pcm, nframes, scfg.sample_rate, &tone_phase, 0.f);
         }
         if (tone) {
@@ -2924,10 +2926,11 @@ stream_setup:
                 hb_latency_estimate(&lat, pkt_ms, q10, (int)btlink_acl_gap_avg(link), sx);
                 pk.bl_sum = pk.bl_n = 0;
             }
-            log_line("stream: pkts=%ld sbc=%ld reads ok=%ld empty=%ld peak=%.4f "
+            log_line("stream: pkts=%ld sbc=%ld reads ok=%ld empty=%ld overrun=%llu fills=%ld peak=%.4f "
                      "out=%.3f gain=%.2f hs=%d backlog=%d bitpool=%d frames/pkt=%d (mtu %d, frame %d B) dropped=%ld",
                      pk.pkts, pk.frames,
-                     reads_ok, reads_empty, (double)peak_seen, out_peak / 1000.0,
+                     reads_ok, reads_empty, (unsigned long long)avcap2_session_overruns(cap),
+                     fills, (double)peak_seen, out_peak / 1000.0,
                      gain_milli / 1000.0, hs_vol, btlink_tx_backlog(link),
                      menc_bitpool(enc), pk.per_pkt, pk.mtu, pk.fsz, btlink_tx_dropped(link));
             CTL_LOCK(&g_ctl);
@@ -3225,8 +3228,9 @@ stream_setup:
             }
         }
     }
-    log_line("stream: ended — pkts=%ld sbc=%ld reads ok=%ld empty=%ld",
-             pk.pkts, pk.frames, reads_ok, reads_empty);
+    log_line("stream: ended — pkts=%ld sbc=%ld reads ok=%ld empty=%ld overrun=%llu fills=%ld",
+             pk.pkts, pk.frames, reads_ok, reads_empty,
+             (unsigned long long)avcap2_session_overruns(cap), fills);
     if (rc == RUN_DROPPED || rc == RUN_AWAY) {
         write_status("disconnected");
         ctl_set_state("disconnected", ini->name);
