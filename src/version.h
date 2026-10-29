@@ -3,7 +3,7 @@
 #define HEARBRIDGE_VERSION_H
 
 #ifndef HEARBRIDGE_VERSION
-#define HEARBRIDGE_VERSION "1.6.2"
+#define HEARBRIDGE_VERSION "1.6.3"
 #endif
 
 /* BossQuickDock: modified version of HearBridge PS5 by X-F1REBALL-X (GPL-3.0). */

@@ -3259,10 +3259,13 @@ stream_setup:
             } else {
                 settle_s = 0;
             }
-            if (want_codec == HB_CODEC_AUTO && av.codec.codec == HB_CODEC_SBC_XQ) {
-                /* Auto picked SBC-XQ but the link cannot carry it: still
-                 * dropping at the bottom of the range for 10 s. Remember that
-                 * for this headset and reconnect with plain SBC. */
+            if (av.codec.codec == HB_CODEC_SBC_XQ &&
+                (want_codec == HB_CODEC_AUTO || want_codec == HB_CODEC_SBC_XQ)) {
+                /* SBC-XQ (picked by auto or by hand) but the link cannot carry
+                 * it: still dropping at the bottom of the range for 10 s.
+                 * Remember that for this headset and go back to plain SBC.
+                 * A Sonic Sub 630 picked by hand dropped ~6 packets/s at
+                 * bitpool 22 for minutes on the console, with no way back. */
                 long d = btlink_tx_dropped(link);
                 xq_bad_s = (d > xq_drops && pk.rate.cur <= pk.rate.lo + 2) ? xq_bad_s + 1 : 0;
                 xq_drops = d;
@@ -3280,8 +3283,15 @@ stream_setup:
                     note_event("Best quality was unstable, using standard quality for this headset");
                     g_prefs.auto_no_xq = 1;
                     prefs_save();
-                    cs_want = HB_CODEC_AUTO;      /* switched in place on the next pass */
-                    cs_no_xq = 1;
+                    CTL_LOCK(&g_ctl);
+                    g_ctl.xq_low = 1;             /* the page says why */
+                    if (want_codec == HB_CODEC_SBC_XQ) {
+                        g_ctl.codec_pref = HB_CODEC_SBC;   /* the page shows SBC picked */
+                        g_ctl.prefs_dirty = 1;
+                    }
+                    CTL_UNLOCK(&g_ctl);
+                    cs_want = want_codec == HB_CODEC_SBC_XQ ? HB_CODEC_SBC : HB_CODEC_AUTO;
+                    cs_no_xq = 1;                 /* switched in place on the next pass */
                     xq_bad_s = 0;
                 }
             }
