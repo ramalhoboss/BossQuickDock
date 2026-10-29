@@ -50,8 +50,9 @@ long acl_pace_due(long *clock, long dur_ms, long now, int backlog)
     if (backlog > PACE_TARGET_PKTS) {
         /* Above target: no pacing wait, send as credits allow, so audio
          * never sits in our queue (latency) after a stall. */
-        if (*clock < now) *clock = now;
-        *clock += dur_ms > 0 ? dur_ms : 0;
+        /* Rebase instead of accumulating future pacing debt while the
+         * congested queue is explicitly allowed to bypass pacing. */
+        *clock = now + (dur_ms > 0 ? dur_ms : 0);
         return now;
     }
     return acl_pace_next(clock, dur_ms, now);

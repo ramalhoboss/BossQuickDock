@@ -69,7 +69,7 @@ test-control:
 	cmp -s $(BUILD)/host/webpage.h src/webpage.h || (echo "src/webpage.h is stale: make webpage"; false)
 	python3 scripts/gen_font.py assets/fonts/inter-latin.woff2 $(BUILD)/host/font_woff2.h
 	cmp -s $(BUILD)/host/font_woff2.h src/font_woff2.h || (echo "src/font_woff2.h is stale: make webpage"; false)
-	cc -std=c11 -Wall -Wextra -O2 -D_DEFAULT_SOURCE -DHB_HTTP_HOST_TEST -Isrc -Isrc/a2dp -Isrc/bt tests/test_control.c src/bt/blocklist.c src/http.c src/gameprof.c src/bt/btchip.c src/diag.c src/ctl.c src/gain.c src/a2dp/eq.c src/a2dp/rate.c src/a2dp/avrcp.c src/a2dp/sdp_server.c src/backup.c -lpthread -lm -o $(BUILD)/host/test_control
+	cc -std=c11 -Wall -Wextra -O2 -D_DEFAULT_SOURCE -DHB_HTTP_HOST_TEST -Isrc -Isrc/a2dp -Isrc/bt tests/test_control.c src/bt/blocklist.c src/http.c src/gameprof.c src/bt/btchip.c src/diag.c src/ctl.c src/gain.c src/a2dp/eq.c src/a2dp/rate.c src/a2dp/avrcp.c src/a2dp/sdp_server.c src/backup.c tests/native_http_stubs.c -lpthread -lm -o $(BUILD)/host/test_control
 	$(BUILD)/host/test_control $(BUILD)/host/status.json
 	python3 -c "import json;d=json.load(open('$(BUILD)/host/status.json'));print('ok   status JSON parses,', len(d), 'keys')"
 
@@ -107,7 +107,7 @@ icon:
 	python3 scripts/gen_pic.py assets/pic0.png src/pic_png.h
 	python3 scripts/gen_start.py src/web/start.html src/start_html.h
 
-test: test-sbc test-aptx test-dump test-crypto test-control test-tile test-devices test-rate test-acl test-mtu test-track test-pace test-diag test-reinstall test-page test-link test-prefs test-eq test-cswitch test-rejoin test-forgot test-switch test-connreq test-cfg test-chip test-night test-alerts test-linkq test-gameprof test-backup test-hfp test-linktune test-txpath
+test: test-monitor test-codec-diag test-capture test-sbc test-aptx test-dump test-crypto test-control test-tile test-devices test-rate test-acl test-mtu test-track test-pace test-diag test-reinstall test-page test-link test-prefs test-eq test-cswitch test-rejoin test-forgot test-switch test-connreq test-cfg test-chip test-night test-alerts test-linkq test-gameprof test-backup test-hfp test-linktune test-txpath
 
 test-txpath:
 	@mkdir -p $(BUILD)/host
@@ -244,3 +244,22 @@ test-linktune:
 	@mkdir -p $(BUILD)/host
 	cc -std=c11 -Wall -Wextra -O2 -Isrc -Isrc/a2dp tests/test_linktune.c src/a2dp/linktune.c src/a2dp/rate.c -o $(BUILD)/host/test_linktune
 	$(BUILD)/host/test_linktune
+
+# Audio-test build: real Avcap2 reader with fake API/clock (no console).
+.PHONY: test-capture
+test-capture:
+	@mkdir -p $(BUILD)/host
+	cc -std=c11 -Wall -Wextra -Werror -O2 -Itests/stubs -Isrc tests/test_avcap2_capture.c src/capture_guard.c -o $(BUILD)/host/test_avcap2_capture
+	$(BUILD)/host/test_avcap2_capture
+
+.PHONY: test-codec-diag
+test-codec-diag:
+	@mkdir -p $(BUILD)/host
+	cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc/a2dp tests/test_caps_diag.c src/a2dp/caps_diag.c -o $(BUILD)/host/test_caps_diag
+	$(BUILD)/host/test_caps_diag
+	cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -Isrc/a2dp -Isrc/bt tests/test_codec_scan.c src/a2dp/caps_diag.c src/a2dp/avdtp_media.c -o $(BUILD)/host/test_codec_scan
+	$(BUILD)/host/test_codec_scan
+
+.PHONY: test-monitor
+test-monitor:
+	node tests/test_monitor.js src/web/monitor.js

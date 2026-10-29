@@ -12,3 +12,7 @@ scripts/** linguist-detectable=false
 tests/decode_dump linguist-detectable=false
 tests/sbc_snr.py linguist-detectable=false
 tests/test_page.js linguist-detectable=false
+tests/test_monitor.js linguist-detectable=false
+# PC Receiver: Windows files keep CRLF in every checkout (CI zips them)
+receiver/*.cmd text eol=crlf
+receiver/*.txt text eol=crlf

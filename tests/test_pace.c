@@ -39,6 +39,21 @@ static int run(const char *name, long stall_at, long stall_ms, int qcap, int *ma
 int main(void)
 {
     int fails = 0, mq; long dm;
+    {
+        long clock = 1000, due; int i;
+        /* Capture resumes in a burst while the queue is above target.
+         * Bypassing pacing must not leave seconds of future clock debt. */
+        for (i = 0; i < 100; i++) {
+            due = acl_pace_due(&clock, 21, 1000, PACE_TARGET_PKTS + 1);
+            if (due != 1000) { puts("FAIL congested burst held back"); fails++; break; }
+        }
+        due = acl_pace_due(&clock, 21, 1000, 0);
+        if (due > 1021) { puts("FAIL future pacing debt after burst"); fails++; }
+        else puts("ok   congestion burst leaves at most one packet interval of pacing debt");
+        clock = 5000;
+        due = acl_pace_due(&clock, 0, 1000, PACE_TARGET_PKTS + 1);
+        if (due != 1000 || clock != 1000) { puts("FAIL congestion did not rebase old clock"); fails++; }
+    }
     int qlow = hb_media_queue_cap(21, HB_QUEUE_LOW_MS), qstable = hb_media_queue_cap(21, HB_QUEUE_STABLE_MS), d;
     if (run("normal rate", 0, 0, 256, &mq, &dm) || mq > PACE_TARGET_PKTS) { puts("FAIL normal rate queues/drops"); fails++; }
     if (run("400 ms stall", 2000, 400, 256, &mq, &dm) || mq > PACE_TARGET_PKTS || dm < 0 || dm > 300) {

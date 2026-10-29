@@ -2,6 +2,7 @@
 """Embed src/web/index.html (with src/web/i18n.json inlined at /*I18N*/)
 as a C string in src/webpage.h."""
 import json, sys
+from pathlib import Path
 src = sys.argv[1] if len(sys.argv) > 1 else "src/web/index.html"
 dst = sys.argv[2] if len(sys.argv) > 2 else "src/webpage.h"
 i18n = sys.argv[3] if len(sys.argv) > 3 else src.rsplit("/", 1)[0] + "/i18n.json"
@@ -13,6 +14,8 @@ for code, d in data["strings"].items():
     if missing:
         sys.exit("i18n: %s is missing %s" % (code, sorted(missing)))
 html = html.replace("/*I18N*/", json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+html = html.replace("/*MONITOR*/", (Path(src).parent / "monitor.js").read_text(encoding="utf-8"))
+html = html.replace("/*STUDIO*/", (Path(src).parent / "studio.js").read_text(encoding="utf-8"))
 lines = []
 for line in html.splitlines():
     esc = line.replace("\\", "\\\\").replace('"', '\\"').replace("??", "?\\?")

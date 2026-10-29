@@ -19,14 +19,26 @@ void            avcap2_session_close(avcap2_session *s);
  * 0 = everything present. */
 int avcap2_probe(void);
 
+/* Snapshot taken by the capture owner, then published under the ctl lock.
+ * State: 0 closed, 1 active, 2 awaiting PCM, 3 recovering, 4 failed, 5 transient. */
+typedef struct {
+    int state, pending_frames;
+    long age_ms;
+    uint32_t last_error;
+    uint64_t valid, empty, overrun, recoveries, no_data, invalid, other, nonfinite;
+} avcap2_stats;
+void avcap2_session_stats(const avcap2_session *s, avcap2_stats *out);
+
 /* Read up to max_frames stereo frames into interleaved s16le.
- * Returns frames read (>0), 0 if empty/transient, -1 on hard error.
+ * Returns frames read (>0), 0 if empty/transient or recovering,
+ * -1 after bounded recovery is exhausted. Excess frames are kept for
+ * subsequent calls before another library read. The library no-wait flag
+ * stays enabled. Missing PCM for 5 s requests recovery; valid zero-valued
+ * samples count as progress. Recovery budget refreshes after 30 s healthy.
+ * Native IPC/locks remain synchronous; no universal call-time bound.
  * If peak_abs != NULL, writes max |sample| in [0,1] for this chunk (0 if empty). */
 int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
                             float *peak_abs);
 
-/* Reads that got OVERRUN: capture fell a whole ring behind and that audio
- * was skipped. 0 for NULL. */
-uint64_t avcap2_session_overruns(const avcap2_session *s);
-
+int avcap2_session_read_latest_s16(avcap2_session *s,int16_t *out,int max_frames,float *peak,unsigned *skipped);
 #endif

@@ -1,9 +1,10 @@
 /* HearBridge — system audio capture through libSceAvcap2 (48 kHz stereo).
  *
  * NIDs + OpenAudio ABI: 16-byte meta, buflen=0x10000, no authid elevation
- * by default, restart on the sticky 0x81950001 status.
+ * by default. Reads use the no-wait flag; recovery is bounded and paced.
  */
 #include "avcap2.h"
+#include "capture_guard.h"
 #include "creds.h"
 #include "diag.h"
 #include "log.h"
@@ -28,11 +29,14 @@
 #define NID_Avcap2Stop       "Z5dKK0xnQ8g"
 #define NID_Avcap2ReadAudio  "WhsHggqdwcg"
 
-/* Avcap2 facility 0x8195 — bit-like status codes. */
-#define AVCAP2_INVALID 0x81950001u /* sticky in 0.0.5; log and return -1 */
-#define AVCAP2_EMPTY   0x81950002u
-#define AVCAP2_OVERRUN 0x81950004u
-#define AVCAP2_ENDED   0x81950008u
+/* Conditions verified in the captured ReadAudio path, not bit flags. */
+#define AVCAP2_INVALID  0x81950001u
+#define AVCAP2_EMPTY    0x81950002u
+#define AVCAP2_UNMAPPED 0x81950003u
+#define AVCAP2_OVERRUN  0x81950004u
+/* No-wait bypasses the library's extra availability/wait loop. Locks and
+ * other native calls may still block; this is not a universal time bound. */
+#define AVCAP2_READ_NOWAIT 1
 
 #define OPEN_PARAM_SIZE 0x38
 #define META_SIZE       0x10
@@ -43,6 +47,11 @@
  * same error comes back on every read. Packets are 1024 frames (8 KB of
  * stereo float); 64 KB also holds 1024 frames of 12-channel float. */
 #define READ_BYTES      0x10000
+#define RECOVERY_LIMIT  3
+#define RECOVERY_GAP_MS 1000
+#define PROBLEM_GRACE_MS 1000
+#define NO_DATA_TIMEOUT_MS 5000
+#define HEALTHY_RESET_MS 30000
 
 /* No authid elevation needed for Avcap2 capture. We try default first. */
 #define AUTHID_AVCAP2   0x4900000000000002ULL
@@ -251,19 +260,15 @@ struct avcap2_session {
     int64_t handle;
     int auth_mode;
     float *buf;
-    int restarts;
     long last_ok_ms;
-    long last_restart_ms;
-    int read_flag;
-    int dead;
+    long watchdog_since_ms;
+    int awaiting_pcm;
+    int recovering;
+    int failed;
     uint64_t reads_ok;
     uint64_t reads_empty;
-    uint64_t reads_overrun;
     uint64_t reads_invalid;
     uint64_t reads_other;
-    /* Part of the last packet not handed out yet (bytes into buf). */
-    int pend_off;
-    int pend_bytes;
     int logged_first;
     /* Detected layout of the capture buffer. Defaults: float32, 2 ch. */
     int fmt_s16;          /* 1 = int16 samples, 0 = float32 */
@@ -273,7 +278,42 @@ struct avcap2_session {
     uint64_t rate_bytes;
     int rate_done;
     uint64_t nonfinite;
+    /* A read can contain more frames than the caller can consume. Keep
+     * the raw read and its detected layout until every frame is drained. */
+    int pending_frames;
+    int pending_offset;
+    int pending_nch;
+    int pending_s16;
+    int recoveries;
+    long recover_at_ms;
+    long problem_since_ms;
+    int problem_active;
+    long healthy_since_ms;
+    int healthy_active;
+    long last_health_diag_ms;
+    uint32_t last_error;
+    const char *recovery_reason;
+    uint64_t recoveries_total;
+    uint64_t reads_unmapped, reads_overrun, reads_zero;
+    uint64_t no_data_events;
 };
+
+void avcap2_session_stats(const avcap2_session *s, avcap2_stats *out)
+{
+    long now;
+    if (!out) return;
+    memset(out, 0, sizeof *out);
+    if (!s) return;
+    now = now_ms();
+    out->state = s->failed ? 4 : s->recovering ? 3 : s->awaiting_pcm ? 2 : s->problem_active ? 5 : 1;
+    out->age_ms = now >= s->last_ok_ms ? now - s->last_ok_ms : 0;
+    out->pending_frames = s->pending_frames;
+    out->last_error = s->last_error;
+    out->valid = s->reads_ok; out->empty = s->reads_empty;
+    out->overrun = s->reads_overrun; out->recoveries = s->recoveries_total;
+    out->no_data = s->no_data_events; out->invalid = s->reads_invalid;
+    out->other = s->reads_other; out->nonfinite = s->nonfinite;
+}
 
 int avcap2_probe(void)
 {
@@ -308,7 +348,7 @@ int avcap2_probe(void)
     return missing ? -1 : 0;
 }
 
-avcap2_session *avcap2_session_open(void)
+static avcap2_session *session_open_impl(void)
 {
     avcap2_session *s;
     uint32_t kh = 0, ah = 0;
@@ -367,10 +407,10 @@ avcap2_session *avcap2_session_open(void)
         free(s);
         return NULL;
     }
-    s->read_flag = 1;
     s->nch = CHANNELS;
     s->last_ok_ms = now_ms();
-    s->last_restart_ms = s->last_ok_ms;
+    s->watchdog_since_ms=s->last_ok_ms;
+    s->awaiting_pcm=1;
     usleep(100000);
     log_line("avcap2: session open for streaming");
     diag_set("audio session", "ok (auth_mode %d)", s->auth_mode);
@@ -378,6 +418,12 @@ avcap2_session *avcap2_session_open(void)
     return s;
 }
 
+avcap2_session *avcap2_session_open(void)
+{
+ avcap2_session *s;
+ if(!capture_guard_take(1)){log_line("avcap2: capture reserved by native recorder");return NULL;}
+ s=session_open_impl();if(!s)capture_guard_release(1);return s;
+}
 void avcap2_session_close(avcap2_session *s)
 {
     if (!s) return;
@@ -389,36 +435,24 @@ void avcap2_session_close(avcap2_session *s)
     if (s->Term) s->Term();
     free(s->buf);
     free(s);
+    capture_guard_release(1);
 }
 
-uint64_t avcap2_session_overruns(const avcap2_session *s)
+/* Drain only this read's saved format, even if a later read detects a
+ * different channel count. No new ReadAudio may overwrite pending data. */
+static int drain_pending(avcap2_session *s, int16_t *out, int max_frames,
+                         float *peak_abs)
 {
-    return s ? s->reads_overrun : 0;
-}
-
-/* Converts up to max_frames of the packet still held in buf to s16 stereo
- * (L/R = first two channels). What does not fit stays for the next call,
- * so a packet longer than max_frames is not cut. Returns frames. */
-static int take_pending(avcap2_session *s, int16_t *out, int max_frames,
-                        float *peak_abs)
-{
-    int bpsamp = s->fmt_s16 ? 2 : 4, nch = s->nch > 0 ? s->nch : 2, f;
-    int frame_bytes = nch * bpsamp;
-    const unsigned char *src = (const unsigned char *)s->buf + s->pend_off;
-    const int16_t *si = (const int16_t *)(const void *)src;
-    const float *sf = (const float *)(const void *)src;
+    int frames = s->pending_frames, f, c;
     float peak = 0.f;
-    int frames = s->pend_bytes / frame_bytes;
-
+    const int16_t *si = (const int16_t *)(const void *)s->buf;
     if (frames > max_frames) frames = max_frames;
     for (f = 0; f < frames; f++) {
-        int c;
         for (c = 0; c < 2; c++) {
-            float v, a;
-            int sample;
-            if (s->fmt_s16) v = (float)si[f * nch + c] / 32768.f;
-            else v = sf[f * nch + c];
-            if (!(v == v) || v > 1e30f || v < -1e30f) { /* NaN / inf */
+            int idx = (s->pending_offset + f) * s->pending_nch + c;
+            float v = s->pending_s16 ? (float)si[idx] / 32768.f : s->buf[idx];
+            float a;
+            if (!(v == v) || v > 1e30f || v < -1e30f) {
                 s->nonfinite++;
                 v = 0.f;
             }
@@ -426,15 +460,112 @@ static int take_pending(avcap2_session *s, int16_t *out, int max_frames,
             if (v < -1.f) v = -1.f;
             a = v < 0 ? -v : v;
             if (a > peak) peak = a;
-            sample = (int)(v * 32767.f);
-            out[f * 2 + c] = (int16_t)sample;
+            out[f * 2 + c] = (int16_t)(v * 32767.f);
         }
     }
-    s->pend_off += frames * frame_bytes;
-    s->pend_bytes -= frames * frame_bytes;
-    if (s->pend_bytes < frame_bytes) s->pend_bytes = 0;   /* partial frame */
+    s->pending_offset += frames;
+    s->pending_frames -= frames;
+    if (!s->pending_frames) s->pending_offset = 0;
     if (peak_abs) *peak_abs = peak;
     return frames;
+}
+
+/* In-memory health details are throttled; the log records state changes. */
+static void capture_health(avcap2_session *s,long now,int force)
+{
+    long age=now>=s->last_ok_ms?now-s->last_ok_ms:0;
+    if(!force && now-s->last_health_diag_ms<1000)return;
+    s->last_health_diag_ms=now;
+    diag_set("capture health","%s; no valid PCM for %ld ms; no-wait flag 1; recovery %d/%d (total %llu); last error %#x; %s",
+             s->failed?"FAILED":s->recovering?"recovering":s->awaiting_pcm?"awaiting PCM":s->problem_active?"transient error":"active",age,s->recoveries,RECOVERY_LIMIT,
+             (unsigned long long)s->recoveries_total,(unsigned)s->last_error,
+             s->recovery_reason?s->recovery_reason:"no recovery requested");
+    diag_set("capture counters","valid %llu empty %llu zero-length %llu overrun %llu unmapped %llu invalid %llu other %llu no-data %llu",
+             (unsigned long long)s->reads_ok,(unsigned long long)s->reads_empty,
+             (unsigned long long)s->reads_zero,(unsigned long long)s->reads_overrun,
+             (unsigned long long)s->reads_unmapped,(unsigned long long)s->reads_invalid,
+             (unsigned long long)s->reads_other,(unsigned long long)s->no_data_events);
+}
+
+/* One restart attempt per call, >=1 s between completions and the next
+ * attempt. No sleep or polling loop here. IPC calls themselves are synchronous.
+ * Three attempts per incident; 30 s of valid capture replenishes the budget. */
+static int recover_capture(avcap2_session *s,long now)
+{
+    int rv;
+    if(s->failed)return -1;
+    if(s->recoveries>=RECOVERY_LIMIT){
+        s->failed=1;
+        log_line("avcap2: recovery exhausted after %d attempts (last error %#x, %s)",s->recoveries,
+                 (unsigned)s->last_error,s->recovery_reason?s->recovery_reason:"unknown");
+        diag_set("audio recovery","FAILED after %d attempts; %s; last error %#x",s->recoveries,
+                 s->recovery_reason?s->recovery_reason:"unknown",(unsigned)s->last_error);
+        capture_health(s,now,1);
+        return -1;
+    }
+    if(now<s->recover_at_ms){capture_health(s,now,0);return 0;}
+    s->recoveries++;s->recoveries_total++;
+    s->pending_frames=s->pending_offset=0;
+    log_line("avcap2: recovery %d/%d total=%llu reason=%s error=%#x (read flag stays 1)",
+             s->recoveries,RECOVERY_LIMIT,(unsigned long long)s->recoveries_total,
+             s->recovery_reason?s->recovery_reason:"unknown",(unsigned)s->last_error);
+    rv=session_restart(s->Init,s->Term,s->Open,s->Close,s->Start,s->Stop,&s->handle,s->auth_mode);
+    now=now_ms();
+    s->recover_at_ms=now+RECOVERY_GAP_MS;
+    if(rv!=0){
+        log_line("avcap2: recovery attempt failed %#x",(unsigned)rv);
+        diag_set("audio recovery","attempt %d/%d failed %#x; %s",s->recoveries,RECOVERY_LIMIT,
+                 (unsigned)rv,s->recovery_reason?s->recovery_reason:"unknown");
+        if(s->recoveries>=RECOVERY_LIMIT){s->failed=1;capture_health(s,now,1);return -1;}
+        capture_health(s,now,1);return 0;
+    }
+    s->recovering=0;
+    s->problem_active=s->healthy_active=0;
+    s->fmt_s16=s->fmt_checked=0;s->nch=CHANNELS;
+    s->rate_t0=0;s->rate_bytes=0;s->rate_done=0;
+    s->watchdog_since_ms=now;
+    s->awaiting_pcm=1;
+    diag_set("audio recovery","reopened %d/%d; awaiting valid PCM; read flag 1",s->recoveries,RECOVERY_LIMIT);
+    log_line("avcap2: recovery reopened capture; awaiting PCM");
+    capture_health(s,now,1);
+    return 0;
+}
+
+static int request_recovery(avcap2_session *s,long now,uint32_t error,const char *reason)
+{
+    s->recovering=1;
+    s->healthy_active=s->problem_active=0;
+    s->last_error=error;s->recovery_reason=reason;
+    s->pending_frames=s->pending_offset=0;
+    return recover_capture(s,now);
+}
+
+/* Allow one-off invalid/unknown results to clear. Repeated errors cannot
+ * turn into silence forever. Their numeric meaning is not guessed. */
+static int capture_problem(avcap2_session *s,long now,uint32_t error,const char *reason)
+{
+    s->healthy_active=0;
+    if(!s->problem_active){
+        s->problem_active=1;s->problem_since_ms=now;
+        log_line("avcap2: capture problem %#x (%s)",(unsigned)error,reason);
+    }
+    s->last_error=error;
+    if(now-s->problem_since_ms>=PROBLEM_GRACE_MS)
+        return request_recovery(s,now,error,reason);
+    capture_health(s,now,0);
+    return 0;
+}
+
+static int capture_no_data(avcap2_session *s,long now,uint32_t error)
+{
+    s->problem_active=0;
+    if(now-s->watchdog_since_ms>=NO_DATA_TIMEOUT_MS){
+        s->no_data_events++;
+        log_line("avcap2: no-data watchdog: %ld ms without valid PCM",now-s->last_ok_ms);
+        return request_recovery(s,now,error,"no PCM for 5 seconds");
+    }
+    capture_health(s,now,0);
+    return 0;
 }
 
 int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
@@ -447,24 +578,29 @@ int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
     extern long now_ms(void);
 
     if (peak_abs) *peak_abs = 0.f;
-    if (!s || !out || max_frames <= 0 || s->dead) return -1;
-    if (s->pend_bytes > 0)
-        return take_pending(s, out, max_frames, peak_abs);
+    if (!s || !out || max_frames <= 0) return -1;
+    if (s->failed) return -1;
+    if (s->recovering) return recover_capture(s, now_ms());
+    if (s->pending_frames > 0)
+        return drain_pending(s, out, max_frames, peak_abs);
     fill_meta(meta);
     if (!s->logged_first) {
         log_line("avcap2: before first stream ReadAudio (buflen=%#x meta=%#x flag=%d)",
-                 READ_BYTES, META_SIZE, s->read_flag);
+                 READ_BYTES, META_SIZE, AVCAP2_READ_NOWAIT);
         s->logged_first = 1;
     }
     t_before = now_ms();
-    got = s->Read(s->handle, s->buf, (size_t)READ_BYTES, meta, s->read_flag);
+    got = s->Read(s->handle, s->buf, (size_t)READ_BYTES, meta, AVCAP2_READ_NOWAIT);
     now = now_ms();
     if (now - t_before > 200)
         log_line("avcap2: ReadAudio blocked %ld ms (rv=%#x)", now - t_before,
                  (unsigned)got);
 
     if (got > 0) {
-        if (got > READ_BYTES) got = READ_BYTES;
+        if (got > READ_BYTES) {
+            s->reads_other++;
+            return capture_problem(s,now,(uint32_t)got,"invalid positive byte count");
+        }
         if (!s->fmt_checked) {
             /* Float32 audio in [-1,1] has almost every word either 0 or with
              * an exponent near 0x3F/0x3E/0x3C... Int16 pairs read as float
@@ -477,14 +613,7 @@ int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
                 nz++;
                 if (e == 0xFF || e > 0x7F || e < 0x50) bad++;
             }
-            {
-                const unsigned char *b8 = (const unsigned char *)s->buf;
-                log_line("avcap2: first data %02x %02x %02x %02x %02x %02x %02x %02x "
-                         "%02x %02x %02x %02x %02x %02x %02x %02x (bytes=%d)",
-                         b8[0], b8[1], b8[2], b8[3], b8[4], b8[5], b8[6], b8[7],
-                         b8[8], b8[9], b8[10], b8[11], b8[12], b8[13], b8[14],
-                         b8[15], got);
-            }
+            hexdump_n("first PCM",(const unsigned char *)s->buf,got<16?got:16);
             if (nz >= 64) {
                 s->fmt_checked = 1;
                 s->fmt_s16 = (bad * 4 > nz);   /* >25% implausible floats */
@@ -513,11 +642,37 @@ int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
                 s->nch = newch;
             }
         }
-        s->pend_off = 0;
-        s->pend_bytes = got;
-        frames = take_pending(s, out, max_frames, &peak);
+        s->pending_nch = s->nch > 0 ? s->nch : CHANNELS;
+        s->pending_s16 = s->fmt_s16;
+        s->pending_offset = 0;
+        {
+            int frame_bytes=s->pending_nch*(s->fmt_s16?2:4);
+            if(frame_bytes<4 || got<frame_bytes || got%frame_bytes){
+                s->reads_other++;
+                return capture_problem(s,now,(uint32_t)got,"unaligned PCM byte count");
+            }
+            s->pending_frames=got/frame_bytes;
+        }
+        frames = drain_pending(s, out, max_frames, &peak);
+        if (s->reads_ok < 3)
+            log_line("avcap2: layout bytes=%d format=%s channels=%d frames=%d pending=%d "
+                     "meta=%02x%02x%02x%02x %02x%02x%02x%02x "
+                     "%02x%02x%02x%02x %02x%02x%02x%02x",
+                     got, s->fmt_s16 ? "s16" : "f32", s->pending_nch, frames, s->pending_frames,
+                     meta[0], meta[1], meta[2], meta[3], meta[4], meta[5], meta[6], meta[7],
+                     meta[8], meta[9], meta[10], meta[11], meta[12], meta[13], meta[14], meta[15]);
         s->last_ok_ms = now;
+        s->watchdog_since_ms=now;
+        s->awaiting_pcm=0;
+        s->problem_active=0;
+        if(!s->healthy_active){s->healthy_active=1;s->healthy_since_ms=now;}
+        if(s->recoveries && now-s->healthy_since_ms>=HEALTHY_RESET_MS){
+            log_line("avcap2: 30 s of healthy capture; recovery budget replenished");
+            s->recoveries=0;
+            diag_set("audio recovery","healthy capture; recovery budget restored; total %llu",(unsigned long long)s->recoveries_total);
+        }
         s->reads_ok++;
+        capture_health(s,now,0);
         if (s->reads_ok <= 3 || (s->reads_ok % 50) == 0)
             log_line("avcap2: Read ok #%llu frames=%d peak=%.4f bytes=%d nonfinite=%llu",
                      (unsigned long long)s->reads_ok, frames, (double)peak, got,
@@ -525,50 +680,40 @@ int avcap2_session_read_s16(avcap2_session *s, int16_t *out, int max_frames,
         if (peak_abs) *peak_abs = peak;
         return frames;
     }
-    if ((unsigned)got == AVCAP2_EMPTY) {
-        s->reads_empty++;
-        if (s->reads_empty <= 3 || (s->reads_empty % 200) == 0)
-            log_line("avcap2: Read empty #%llu", (unsigned long long)s->reads_empty);
-        return 0;
+    if((unsigned)got==AVCAP2_EMPTY || got==0){
+        if(!got)s->reads_zero++;else s->reads_empty++;
+        return capture_no_data(s,now,(uint32_t)got);
     }
-    if ((unsigned)got == AVCAP2_OVERRUN) {
-        /* We fell more than the capture ring (~340 ms of stereo) behind:
-         * the library moved us to the newest packet, the rest is lost. */
-        s->reads_overrun++;
-        if (s->reads_overrun <= 8 || (s->reads_overrun % 50) == 0)
-            log_line("avcap2: Read OVERRUN #%llu (audio skipped)",
-                     (unsigned long long)s->reads_overrun);
-        return 0;
+    if((unsigned)got==AVCAP2_OVERRUN){
+        s->reads_overrun++;s->healthy_active=0;
+        if(s->reads_overrun<=3 || s->reads_overrun%100==0)
+            log_line("avcap2: overrun #%llu; reader resynchronised by library",(unsigned long long)s->reads_overrun);
+        return capture_no_data(s,now,(uint32_t)got);
     }
-    if ((unsigned)got == AVCAP2_ENDED) {
-        log_line("avcap2: Read ENDED %#x", (unsigned)got);
-        s->dead = 1;
-        return -1;
+    if((unsigned)got==AVCAP2_UNMAPPED){
+        s->reads_unmapped++;
+        return request_recovery(s,now,(uint32_t)got,"shared mapping unavailable");
     }
-    if ((unsigned)got == AVCAP2_INVALID) {
+    if((unsigned)got==AVCAP2_INVALID){
         s->reads_invalid++;
-        if (s->reads_invalid <= 8)
-            log_line("avcap2: Read INVALID #%llu %#x",
-                     (unsigned long long)s->reads_invalid, (unsigned)got);
-        if (now - s->last_ok_ms > 800 && now - s->last_restart_ms > 800 &&
-            s->restarts < 3) {
-            s->restarts++;
-            s->last_restart_ms = now;
-            if (s->restarts == 2) s->read_flag = 0;
-            log_line("avcap2: stream restart #%d", s->restarts);
-            if (session_restart(s->Init, s->Term, s->Open, s->Close, s->Start,
-                                s->Stop, &s->handle, s->auth_mode) != 0) {
-                s->dead = 1;
-                return -1;
-            }
-            usleep(100000);
-            s->last_ok_ms = now_ms();
-        }
-        return 0;
+        return capture_problem(s,now,(uint32_t)got,"invalid capture state or buffer");
     }
     s->reads_other++;
-    if (s->reads_other <= 8)
-        log_line("avcap2: Read other #%llu %#x",
-                 (unsigned long long)s->reads_other, (unsigned)got);
-    return 0;
+    return capture_problem(s,now,(uint32_t)got,"unclassified capture status");
+}
+
+/* Live-edge drain at startup/after a stall. Bounded to 16 no-wait reads.
+ * A zero read does not overwrite PCM, so the newest complete block remains. */
+int avcap2_session_read_latest_s16(avcap2_session *s,int16_t *out,int max_frames,float *peak,unsigned *skipped){
+ int latest=0;float latest_peak=0;
+ if(skipped)*skipped=0;
+ for(int i=0;i<16;i++){
+  float p=0;int n=avcap2_session_read_s16(s,out,max_frames,&p);
+  if(n<0)return -1;
+  if(!n)break;
+  if(latest && skipped)*skipped+=(unsigned)latest;
+  latest=n;latest_peak=p;
+ }
+ if(peak)*peak=latest_peak;
+ return latest;
 }

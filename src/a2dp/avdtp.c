@@ -2,6 +2,8 @@
 #include "hsprefs.h"
 #include "log.h"
 #include "util.h"
+#include "diag.h"
+#include "caps_diag.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -249,6 +251,10 @@ static int avdtp_cmd_inner(avdtp_session *s, unsigned char signal,
                 unsigned char pkt_type = (rsp[0] >> 2) & 0x03;
                 unsigned char msg = rsp[0] & 0x03;
                 unsigned char sig = rsp[1] & 0x3F;
+                if(s->diag_query && msg!=AV_MSG_COMMAND && rlabel==label && sig==signal && pkt_type!=AV_PKT_SINGLE){
+                    log_line("codec-diag: fragmented response for %#x; incomplete (no capability inference)",signal);
+                    return -1;
+                }
                 if (pkt_type != AV_PKT_SINGLE && pkt_type != AV_PKT_END) {
                     log_line("avdtp: multi-packet type %u (len %d) ignored",
                              pkt_type, got);
@@ -473,6 +479,85 @@ static void find_aptx_sep(avdtp_session *s, const unsigned char *disc, int nseid
         log_line("avdtp: no aptX sink among %d other SEP(s)", tried);
 }
 
+/* Startup-only, read-only AVDTP inspection. Never changes selected codec,
+ * SEID or configuration. A timeout/malformed response is incomplete, not
+ * evidence that a codec is unsupported. */
+static void diagnose_sink_codecs(avdtp_session *s)
+{
+    unsigned char disc[256], caps[256], body[1];
+    int dl=0, cl=0, msg, i, sinks=0, tried=0, failed=0, aac=0, sbc=0, vendor=0;
+    int incomplete=0, quick=s->quick, previous_diag=s->diag_query;
+    uint64_t seen=0;
+    long began=now_ms();
+    s->quick=1; s->diag_query=1;
+    diag_set("codec discovery", "running; selected codec unchanged");
+    log_line("codec-diag: begin selected=%s; discovery only", s->codec.name?s->codec.name:"SBC");
+    msg=avdtp_cmd(s,AV_DISCOVER,NULL,0,disc,sizeof disc,&dl);
+    if (msg!=AV_MSG_ACCEPT || dl<2 || (dl&1)) {
+        log_line("codec-diag: Discover incomplete msg=%d bytes=%d",msg,dl);
+        diag_set("codec discovery", "incomplete: Discover msg %d, %d bytes; AAC unknown",msg,dl);
+        s->quick=quick; s->diag_query=previous_diag;
+        return;
+    }
+    for(i=0;i<dl/2;i++) {
+        int seid,in_use,tsep,media;
+        parse_sep(disc+i*2,&seid,&in_use,&tsep,&media);
+        log_line("codec-diag: endpoint seid=%d in_use=%d direction=%s media=%d",seid,in_use,tsep?"sink":"source",media);
+        if(tsep==1 && media==0 && seid>0 && seid<63 && !(seen&(UINT64_C(1)<<seid))) {
+            seen|=UINT64_C(1)<<seid; sinks++;
+        }
+    }
+    seen=0;
+    for(i=0;i<dl/2;i++) {
+        int seid,in_use,tsep,media,j,k;
+        hb_caps_diag info;
+        parse_sep(disc+i*2,&seid,&in_use,&tsep,&media);
+        if(tsep!=1 || media!=0 || seid<=0 || seid>=63 || (seen&(UINT64_C(1)<<seid))) continue;
+        seen|=UINT64_C(1)<<seid;
+        if (now_ms()-began>=8000) { incomplete=1; break; }
+        tried++;
+        body[0]=(unsigned char)(seid<<2);
+        msg=avdtp_cmd(s,AV_GET_ALL_CAPABILITIES,body,1,caps,sizeof caps,&cl);
+        if((msg==AV_MSG_REJECT || msg==AV_MSG_GEN_REJ) && now_ms()-began<8000)
+            msg=avdtp_cmd(s,AV_GET_CAPABILITIES,body,1,caps,sizeof caps,&cl);
+        if(msg!=AV_MSG_ACCEPT) {
+            failed++; log_line("codec-diag: seid=%d query failed msg=%d; capabilities unknown",seid,msg); continue;
+        }
+        for(k=0;k<cl;k+=24) {
+            char raw[24*3+1]; int at=0,n=cl-k; if(n>24)n=24;
+            for(j=0;j<n;j++) at+=snprintf(raw+at,sizeof raw-(size_t)at,"%02x%s",caps[k+j],j+1<n?" ":"");
+            log_line("codec-diag: seid=%d raw+%d/%d %s",seid,k,cl,raw);
+        }
+        if(!hb_caps_diag_parse(caps,cl,&info) || !info.count) {
+            failed++; log_line("codec-diag: seid=%d malformed/no codec; capabilities unknown",seid); continue;
+        }
+        for(j=0;j<info.count;j++) {
+            hb_diag_codec *c=&info.codecs[j];
+            const unsigned char *ie=caps+c->ie_offset;
+            log_line("codec-diag: seid=%d media=%u codec=%s id=%#x info_bytes=%d delay_report=%d",
+                     seid,c->media,hb_caps_diag_name(c->codec),c->codec,c->ie_len,info.delay_report);
+            if(c->media!=0) continue;
+            if(c->codec==0 && c->ie_len>=4) sbc++;
+            if(c->codec==2 && c->ie_len>=6) { aac++;
+                log_line("codec-diag: AAC seid=%d object_mask=%#x frequency_mask=%#x channel_bits=%#x (advertised, not selected)",
+                         seid,ie[0],((unsigned)ie[1]<<4)|(ie[2]>>4),ie[2]&0x0c);
+            }
+            if(c->codec==255 && c->ie_len>=6) {
+                uint32_t v=(uint32_t)ie[0]|(uint32_t)ie[1]<<8|(uint32_t)ie[2]<<16|(uint32_t)ie[3]<<24;
+                unsigned id=(unsigned)ie[4]|(unsigned)ie[5]<<8; vendor++;
+                log_line("codec-diag: vendor seid=%d vendor_id=%#x codec_id=%#x",seid,(unsigned)v,id);
+            }
+        }
+    }
+    if(!sinks || tried!=sinks || failed) incomplete=1;
+    log_line("codec-diag: %s sinks=%d queried=%d failed=%d SBC=%d AAC=%d vendor=%d elapsed=%ldms selected=%s",
+             incomplete?"INCOMPLETE":"complete",sinks,tried,failed,sbc,aac,vendor,now_ms()-began,s->codec.name?s->codec.name:"SBC");
+    diag_set("codec discovery", "%s: sinks %d, queried %d, failed %d; SBC %d AAC %d vendor %d; AAC %s; selected unchanged",
+             incomplete?"INCOMPLETE":"complete",sinks,tried,failed,sbc,aac,vendor,
+             aac?"advertised (format not selected)":(incomplete?"unknown":"not advertised"));
+    s->quick=quick; s->diag_query=previous_diag;
+}
+
 static int configure_and_start(avdtp_session *s);
 
 int avdtp_setup(avdtp_session *s, btlink *link, unsigned avdtp_psm, int want_codec, int no_xq)
@@ -540,6 +625,7 @@ int avdtp_setup(avdtp_session *s, btlink *link, unsigned avdtp_psm, int want_cod
             s->unsupported_format = 1;
             return 0;
         }
+        diagnose_sink_codecs(s);
         return configure_and_start(s);
     }
 
@@ -657,7 +743,8 @@ int avdtp_setup(avdtp_session *s, btlink *link, unsigned avdtp_psm, int want_cod
         return 0;
     }
 
-    return configure_and_start(s);
+    diagnose_sink_codecs(s);
+        return configure_and_start(s);
 }
 
 /* SET_CONFIGURATION body for the codec in s->codec on s->sink.seid, with

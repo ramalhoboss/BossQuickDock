@@ -1,0 +1,57 @@
+
+/* ---------- Studio diagnostics ---------- */
+var MON=BQDMonitor.create(),studioLast=0,studioDiag='',studioDiagAt=0,studioExportBusy=false;
+function studioStop(){if(confirm('Stop BossQuickDock? Bluetooth audio will stop.')){if(MON.test&&MON.test.active)BQDMonitor.finish(MON,Date.now(),'application stopped by user');act('/api/stop',function(st){if(st==200){msg('BossQuickDock stopped. You can now load the new ELF.',1);setPill('bad','Stopped');}});}}
+$('stopTop').onclick=studioStop;$('stop').onclick=studioStop;
+function studioKV(id,rows){$(id).innerHTML=rows.map(function(x){return '<span class="k">'+esc(x[0])+'</span><span class="n">'+esc(x[1])+'</span>';}).join('');}
+function studioChart(id,key,color){var cv=$(id),w=cv.clientWidth|0,h=110;if(w<2)return;cv.width=w;cv.height=h;var cx=cv.getContext('2d');if(!cx||!cx.clearRect)return;cx.clearRect(0,0,w,h);var a=MON.history,max=key==='bitpool'?Math.max(40,S&&S.bitpool_max||0):1;for(var i=0;i<a.length;i++)max=Math.max(max,a[i][key]);cx.strokeStyle='rgba(110,150,255,.15)';cx.lineWidth=1;for(i=0;i<3;i++){var y=10+i*45;cx.beginPath();cx.moveTo(0,y);cx.lineTo(w,y);cx.stroke();}cx.fillStyle='#b8c2d8';cx.font='11px sans-serif';cx.fillText(''+max,3,12);if(!a.length)return;var t0=a[0].at_ms,t1=a[a.length-1].at_ms;cx.strokeStyle=color;cx.lineWidth=2;cx.beginPath();var prev=0;for(i=0;i<a.length;i++){var x=8+(w-16)*(a[i].at_ms-t0)/Math.max(1000,t1-t0),y=100-85*a[i][key]/max;if(!i||a[i].at_ms-prev>3500)cx.moveTo(x,y);else cx.lineTo(x,y);prev=a[i].at_ms;}cx.stroke();}
+function studioSample(s){var now=Date.now();if(now-studioLast>=800){BQDMonitor.observe(MON,s,now);studioLast=now;}}
+function studioDraw(){if(!S)return;
+ $('buildTop').textContent=S.version;var c=S.capture||{},names=['closed','active','waiting for PCM','recovering','failed','transient error'];
+ studioKV('captureKV',[['State',S.state==='streaming'?(names[c.state]||'no telemetry'):'not playing'],['Time since valid PCM',(c.age_ms||0)+' ms'],['Valid PCM blocks',c.valid||0],['Empty reads',c.empty||0],['Overruns / recoveries',(c.overrun||0)+' / '+(c.recoveries||0)],['No-data events',c.no_data||0],['Last error',c.last_error?'0x'+c.last_error.toString(16):'none'],['Pending frames',c.pending_frames||0]]);
+ $('studioDevice').textContent=(S.device||'No device')+' · '+(S.codec||'no codec')+' · '+(fresh()?'current data':'stale data');
+ var l=S.latency||{};$('latNote').textContent='Estimated total: '+(l.estimate_ms||0)+' ms. Receiver: '+(l.sink_ms||0)+' ms '+(l.sink_reported?'reported by device':'assumed by project')+'. Capture, packet, queue and radio components are approximate; end-to-end latency has not been measured.';
+ if($('vDiag').className.indexOf('on')>=0){studioChart('queueChart','queue','#38d6ff');studioChart('bpChart','bitpool','#b48cff');}
+ var recent=BQDMonitor.recent(MON,Date.now());studioKV('recentKV',[['Total link drops',S.dropped||0],['Observed recent drops',recent.dropped],['Observed drops / minute',recent.stale?'stale':recent.drops_per_min===null?'collecting data':recent.drops_per_min],['Observation time',recent.observed_s+' s'],['Packets / second',recent.stale?'stale':recent.packets_per_s===null?'collecting data':recent.packets_per_s],['Observation gaps',recent.gaps]]);
+ studioTestDraw();}
+function studioTestDraw(){var now=Date.now();BQDMonitor.tick(MON,now);var r=BQDMonitor.report(MON,now);$('testStart').disabled=!!(r&&r.active)||!S||S.state!=='streaming'||!!S.paused||!fresh();$('testEnd').disabled=!(r&&r.active);$('testLen').disabled=!!(r&&r.active);
+ if(!r){$('testState').textContent='Ready to test';$('testKV').innerHTML='';return;}
+ $('testState').textContent=r.result+' · '+r.elapsed_s+' / '+r.target_s+' s';
+ studioKV('testKV',[['Packets sent',r.packets],['Drops / minute',r.dropped+' / '+(r.drops_per_min===null?'—':r.drops_per_min)],['Overruns / recoveries',r.overrun+' / '+r.recoveries],['Average / maximum queue',r.queue_avg+' / '+r.queue_max+' packets'],['Observation coverage',r.coverage_pct+'%'],['Observation gaps',r.observation_gaps],['Reason',r.reason]]);}
+$('testStart').onclick=function(){try{if(!fresh())throw Error('Wait for current data.');BQDMonitor.start(MON,S,Date.now(),+$('testLen').value);studioTestDraw();}catch(e){msg(e.message);}};
+$('testEnd').onclick=function(){BQDMonitor.finish(MON,Date.now(),'stopped by user');studioTestDraw();};
+$('diagRefresh').onclick=function(){var b=this;b.disabled=true;get('/api/diag',function(st,j,t){b.disabled=false;if(st==200){studioDiag=t;studioDiagAt=Date.now();$('diagRaw').textContent=t;$('diagWhen').textContent='Diagnostics retrieved at '+new Date(studioDiagAt).toLocaleTimeString();}else $('diagWhen').textContent='Could not retrieve diagnostics.';});};
+function studioDownload(data){var text=JSON.stringify(data,null,2);$('exportText').value=text;$('exportFallback').style.display='block';if(typeof Blob==='undefined'||typeof URL==='undefined'||!URL.createObjectURL){msg('Report available to copy.',1);return;}try{var u=URL.createObjectURL(new Blob([text],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='BossQuickDock-diagnostics-'+Date.now()+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(u);},1000);msg('Report ready. You can also copy the text.',1);}catch(e){msg('Copy the report from the field below.',1);}}
+$('diagExport').onclick=function(){if(studioExportBusy)return;studioExportBusy=true;this.disabled=true;var snapshot=BQDMonitor.exported(MON,S,Date.now());/* Export the diagnostic summary only; omit arbitrary log tails and redact credential-like values. */
+ get('/api/diag',function(st,j,t){studioExportBusy=false;$('diagExport').disabled=false;snapshot.native_diagnostic=st==200?t.split('--- log tail')[0].replace(/[^\n]*(?:token|password|secret|link.key|pairing.key)[^\n]*/gi,'[line redacted]').replace(/[0-9a-f]{32}/gi,'[value redacted]'):null;snapshot.native_diagnostic_error=st==200?null:'unavailable';studioDownload(snapshot);});};
+(function(){var bs=document.querySelectorAll('[data-buffer]');for(var i=0;i<bs.length;i++)bs[i].onclick=function(){var value=this.getAttribute('data-buffer');act(value==='auto'?'/api/latency?auto=1':'/api/latency?ms='+value,function(st){if(st==200)msg('Buffer preset applied. This is not total latency.',1);else msg('Could not apply the preset.');});};})();
+setInterval(function(){studioTestDraw();if(S&&!fresh())$('studioDevice').textContent=(S.device||'No device')+' · stale data: panel connection interrupted';},1000);
+
+/* Display preferences are browser-only and never sent to the console. */
+function setTextSize(size){var sizes={standard:'',large:'20px',tv:'24px'};if(!Object.prototype.hasOwnProperty.call(sizes,size))size='standard';document.documentElement.style.fontSize=sizes[size];document.documentElement.className='bqd-text-'+size;try{localStorage.setItem('bqdTextSize',size);}catch(e){}var bs=document.querySelectorAll('[data-text-size]');for(var i=0;i<bs.length;i++)bs[i].className='b'+(bs[i].getAttribute('data-text-size')===size?' on':'');}
+(function(){var bs=document.querySelectorAll('[data-text-size]');for(var i=0;i<bs.length;i++)bs[i].onclick=function(){setTextSize(this.getAttribute('data-text-size'));};var size='standard';try{size=localStorage.getItem('bqdTextSize')||size;}catch(e){}setTextSize(size);})();
+$('clearCharts').onclick=function(){MON.history=[];MON.last=null;MON.lastAt=0;msg('Recent history cleared. Stability test results are kept.',1);if(S)studioDraw();};
+
+/* Native recorder: a separate capture mode, independent of Bluetooth codec selection. */
+var NATIVE=null,nativePending=false;
+function nativeDraw(){var n=NATIVE||{},active=!!n.active,can=!!S&&fresh()&&!S.connected&&!!S.paused;
+ $('nativeStart').disabled=active||nativePending||!can;$('nativeStop').disabled=!active;$('nativeFormat').disabled=active;$('nativeLength').disabled=active;$('nativeReconnect').disabled=active;
+ $('liveStart').disabled=active||nativePending||!can;$('liveStop').disabled=!active||n.mode!=='live';$('liveIP').disabled=active;$('livePort').disabled=active;
+ $('liveState').textContent=n.mode==='live'?(active?'Sending to ':'Last destination: ')+(n.destination||'')+':'+n.port+' · '+(n.sent_packets||0)+' packets sent · '+(n.send_errors||0)+' send errors · '+(n.capture_retries||0)+' capture retries · '+(n.network_reopens||0)+' socket reopens. Delivery and playback are reported by the PC Receiver.':'Opus · stereo 48 kHz · 10 ms blocks · UDP';
+ $('nativeState').textContent=(n.reason||'Ready')+(active?(n.mode==='live'?' · live ':' · recording ')+n.codec:'')+(!active&&!can?' · disconnect Bluetooth to record':'');
+ $('nativeProgress').hidden=n.mode==='live';$('nativeProgress').value=Math.min(100,100*(n.elapsed_ms||0)/Math.max(1,(n.duration_s||12)*1000));
+ studioKV('nativeKV',[['Format',n.codec||'Not selected'],['Recorded time',((n.elapsed_ms||0)/1000).toFixed(1)+' s'],['Packets / payload',(n.packets||0)+' / '+(n.payload_bytes||0)+' bytes'],['Overruns / timestamp gaps',(n.overruns||0)+' / '+(n.pts_discontinuities||0)],['Block duration',(n.frame_ms||'—')+' ms'],['Saved folder',n.folder||'No recording yet']]);
+ $('nativeDownloads').hidden=active||!n.ready;$('nativeFile').textContent='Download '+(n.codec||'audio');
+}
+function nativePoll(){if(nativePending)return;nativePending=true;get('/api/native',function(st,j){nativePending=false;if(st==200&&j&&j.codec){NATIVE=j;nativeDraw();}else{$('nativeState').textContent='Recorder unavailable. Refresh or check the loaded ELF version.';$('nativeStart').disabled=true;}});}
+$('nativeDisconnect').onclick=function(){act('/api/disconnect',function(st){if(st!=200)msg('Could not disconnect Bluetooth.');});};
+$('nativeReconnect').onclick=function(){act('/api/connect',function(st,j){if(st!=200)msg(j&&j.error||'Could not reconnect Bluetooth.');});};
+$('nativeStart').onclick=function(){if(this.disabled)return;this.disabled=true;act('/api/native/start?format='+encodeURIComponent($('nativeFormat').value)+'&seconds='+encodeURIComponent($('nativeLength').value),function(st,j){if(st==200){NATIVE=j;nativeDraw();msg('Native recording started.',1);}else{msg(j&&j.error||'Could not start recording.');nativePoll();}});};
+$('nativeStop').onclick=function(){act('/api/native/stop',function(st){if(st!=200)msg('Could not stop recording.');nativePoll();});};
+$('nativeRefresh').onclick=nativePoll;
+$('nativeReport').onclick=function(){if(NATIVE)studioDownload({application:S&&S.version,recording:NATIVE,exported_at:new Date().toISOString()});};
+setInterval(function(){if((NATIVE&&NATIVE.active)||$('vRecord').className.indexOf('on')>=0)nativePoll();else if(NATIVE)nativeDraw();},1000);
+
+try{$('liveIP').value=localStorage.getItem('bqdReceiverIP')||'';}catch(e){}
+$('liveStart').onclick=function(){if(this.disabled)return;var ip=$('liveIP').value.trim(),port=+$('livePort').value;if(!/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip)||port<1024||port>65535){msg('Enter the PC IPv4 address and a UDP port from 1024 to 65535.');return;}this.disabled=true;act('/api/native/live?ip='+encodeURIComponent(ip)+'&port='+port,function(st,j){if(st==200){NATIVE=j;try{localStorage.setItem('bqdReceiverIP',ip);}catch(e){}nativeDraw();msg('Live Opus started. Check playback on the PC Receiver.',1);}else{msg(j&&j.error||'Could not start live audio.');nativePoll();}});};
+$('liveStop').onclick=function(){act('/api/native/stop',function(st){if(st!=200)msg('Could not stop live audio.');nativePoll();});};

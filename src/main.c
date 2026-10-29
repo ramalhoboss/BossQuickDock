@@ -1,3 +1,5 @@
+#include "direct_sbc.h"
+#include "native_audio.h"
 /* HearBridge PS5 — Bluetooth A2DP audio for the console.
  *
  * Saved device (headset.ini addr+key) → reconnect; else Inquiry → audio
@@ -18,6 +20,7 @@
 #include "a2dp/devclass.h"
 #include "a2dp/rate.h"
 #include "a2dp/menc.h"
+#include "a2dp/stream_diag.h"
 #include "a2dp/sbc.h"
 #include "a2dp/sdp_a2dp.h"
 #include "avcap2.h"
@@ -2173,6 +2176,7 @@ typedef struct {
     btlink *link;
     hb_rate rate;
     int fsz, samples_per, per_pkt, mtu;
+    int direct;
     hb_tune tune;        /* tuned frames/packet ceiling (tune.max_pp, 0 = MTU fit) */
     int queue_ms;        /* media queue target (latency slider), ms */
     long bl_sum, bl_n;   /* backlog samples since the last status (latency estimate) */
@@ -2180,6 +2184,8 @@ typedef struct {
     unsigned char buf[HCI_PKT_MAX];
     int nbytes, nframes;
     long pkts, frames;
+    hb_stream_diag profile;
+    uint64_t first_encoded_us;
 } packer;
 
 /* As many whole frames as the media MTU holds (RTP 12 + SBC header 1;
@@ -2191,30 +2197,76 @@ static int packer_fit(const packer *p)
     int pp = hb_frames_per_packet(p->mtu, p->fsz);       /* always MTU-capped */
     int lat_pp = hb_latency_frames_cap(p->queue_ms, p->rate_hz, p->samples_per);
     if (pp * p->fsz > (int)sizeof p->buf) pp = (int)sizeof p->buf / p->fsz;
-    if (lat_pp > 0 && pp > lat_pp) pp = lat_pp;
+    if (!p->direct && lat_pp > 0 && pp > lat_pp) pp = lat_pp;
+    if(p->direct && pp>BQD_SBC_PACKET_FRAMES)pp=BQD_SBC_PACKET_FRAMES;
     return pp < 1 ? 1 : pp;
 }
 
 static void packer_size(packer *p)
 {
+    p->direct=BQD_DIRECT_SBC && !menc_is_aptx(p->enc);
+    if(p->link)btlink_set_media_direct(p->link,p->direct);
     p->fsz = (int)menc_frame_bytes(p->enc);
     if (p->fsz <= 0) p->fsz = 29;
     p->per_pkt = packer_fit(p);
-    if (p->tune.max_pp > 0 && p->per_pkt > p->tune.max_pp) p->per_pkt = p->tune.max_pp;
+    if (!p->direct && p->tune.max_pp > 0 && p->per_pkt > p->tune.max_pp) p->per_pkt = p->tune.max_pp;
     if (p->link && p->rate_hz > 0)
         btlink_set_media_pace(p->link, (long)p->per_pkt * p->samples_per * 1000L / p->rate_hz);
 }
 
+/* Software timings only: submission is not USB completion, reception or
+ * acoustic playback. Sample in memory and report once per five seconds. */
+static uint64_t stream_diag_us(void)
+{
+    struct timespec t;
+    if (clock_gettime(CLOCK_MONOTONIC,&t)!=0) return 0;
+    return (uint64_t)t.tv_sec*UINT64_C(1000000)+(uint64_t)t.tv_nsec/1000;
+}
+static void stream_diag_report(packer *p,int force)
+{
+    hb_stream_diag *d=&p->profile;
+    uint64_t end=stream_diag_us(),elapsed;
+    if (!d->began_us || end<d->began_us) return;
+    elapsed=end-d->began_us;
+    if(!force && elapsed<UINT64_C(5000000))return;
+    log_line("timing-diag: window_us=%llu capture=%llu/%llu/%llu encode=%llu/%llu/%llu submit=%llu/%llu/%llu assembly=%llu/%llu/%llu delivery=%llu/%llu/%llu work=%llu/%llu/%llu pcm_frames=%llu empty=%llu hard=%llu submit_failed=%llu (triples=count/avg_us/max_us; software only)",
+        (unsigned long long)elapsed,
+        (unsigned long long)d->capture.calls,(unsigned long long)hb_diag_time_avg(&d->capture),(unsigned long long)d->capture.max_us,
+        (unsigned long long)d->encode.calls,(unsigned long long)hb_diag_time_avg(&d->encode),(unsigned long long)d->encode.max_us,
+        (unsigned long long)d->submit.calls,(unsigned long long)hb_diag_time_avg(&d->submit),(unsigned long long)d->submit.max_us,
+        (unsigned long long)d->assembly.calls,(unsigned long long)hb_diag_time_avg(&d->assembly),(unsigned long long)d->assembly.max_us,
+        (unsigned long long)d->delivery.calls,(unsigned long long)hb_diag_time_avg(&d->delivery),(unsigned long long)d->delivery.max_us,
+        (unsigned long long)d->work.calls,(unsigned long long)hb_diag_time_avg(&d->work),(unsigned long long)d->work.max_us,
+        (unsigned long long)d->pcm_frames,(unsigned long long)d->empty,(unsigned long long)d->hard,(unsigned long long)d->submit_failed);
+    diag_set("timing capture","window %llu us; calls %llu avg %llu max %llu us; empty %llu hard %llu; includes conversion",
+        (unsigned long long)elapsed,(unsigned long long)d->capture.calls,(unsigned long long)hb_diag_time_avg(&d->capture),(unsigned long long)d->capture.max_us,(unsigned long long)d->empty,(unsigned long long)d->hard);
+    diag_set("timing encode","calls %llu avg %llu max %llu us; PCM frames %llu",
+        (unsigned long long)d->encode.calls,(unsigned long long)hb_diag_time_avg(&d->encode),(unsigned long long)d->encode.max_us,(unsigned long long)d->pcm_frames);
+    diag_set("timing submit","calls %llu avg %llu max %llu us; failed %llu; API submission, not radio/playback delay",
+        (unsigned long long)d->submit.calls,(unsigned long long)hb_diag_time_avg(&d->submit),(unsigned long long)d->submit.max_us,(unsigned long long)d->submit_failed);
+    diag_set("timing packet assembly","avg %llu max %llu us; first encoded frame to submission",
+        (unsigned long long)hb_diag_time_avg(&d->assembly),(unsigned long long)d->assembly.max_us);
+    diag_set("timing delivery interval","avg %llu max %llu us between successful capture calls; not sample age",
+        (unsigned long long)hb_diag_time_avg(&d->delivery),(unsigned long long)d->delivery.max_us);
+    { uint64_t last=d->last_delivery_us; memset(d,0,sizeof *d);d->began_us=end;d->last_delivery_us=last; }
+}
+
 static void packer_flush(packer *p)
 {
-    int bp;
+    int bp, sent;
+    uint64_t began;
     if (p->nframes <= 0) return;
-    if (avdtp_send_media(p->av, p->buf, p->nbytes, p->samples_per * p->nframes,
-                         p->nframes)) {
+    began=stream_diag_us();
+    if(p->first_encoded_us)hb_diag_time_add(&p->profile.assembly,p->first_encoded_us,began);
+    sent=avdtp_send_media(p->av,p->buf,p->nbytes,p->samples_per*p->nframes,p->nframes);
+    hb_diag_time_add(&p->profile.submit,began,stream_diag_us());
+    if(!sent)p->profile.submit_failed++;
+    if (sent) {
         p->pkts++;
         p->frames += p->nframes;
     }
     p->nbytes = p->nframes = 0;
+    p->first_encoded_us=0;
     p->bl_sum += btlink_tx_backlog(p->link);
     p->bl_n++;
     if (menc_is_aptx(p->enc)) return;    /* fixed rate: no bitpool to adapt */
@@ -2308,8 +2360,10 @@ static int packer_feed(packer *p, const int16_t *pcm, int frames)
     while (off < frames) {
         int chunk = frames - off, got;
         if (chunk > p->samples_per) chunk = p->samples_per;
+        uint64_t began=stream_diag_us();
         got = menc_encode(p->enc, pcm + off * 2, chunk, p->buf + p->nbytes,
                           sizeof p->buf - (size_t)p->nbytes);
+        hb_diag_time_add(&p->profile.encode,began,stream_diag_us());
         off += chunk;
         if (got < 0) {
             log_line("media: %s encode error", menc_is_aptx(p->enc) ? "aptX" : "SBC");
@@ -2324,6 +2378,7 @@ static int packer_feed(packer *p, const int16_t *pcm, int frames)
             packer_flush(p);
             memcpy(p->buf, keep, (size_t)got);
         }
+        if(!p->nframes)p->first_encoded_us=began;
         p->nbytes += got;
         p->nframes += got / p->fsz > 0 ? got / p->fsz : 1;
         if (p->nframes >= p->per_pkt ||
@@ -2349,8 +2404,11 @@ static int run_session(a2dp_session *asess, hci_t hci, headset_ini *ini)
     unsigned av_psm = 0, mtu;
     int16_t pcm[PCM_CAP_FRAMES * 2];
     int rc = RUN_FAIL, r = 0;
+    int profile_active=0;
+    uint64_t capture_began_us=0,capture_ended_us=0;
     long t_start, t_stat, samples = 0, reads_ok = 0, reads_empty = 0;
     long fills = 0;                    /* silence chunks sent for missing capture */
+    long last_pcm_read_ms=0;
     double tone_phase = 0.0, sine_phase = 0.0;
     float peak_seen = 0.f;
     int tone = 0, tone_file = 0, gain_milli = 1000, out_peak = 0, gain_pct, muted;
@@ -2510,6 +2568,7 @@ static int run_session(a2dp_session *asess, hci_t hci, headset_ini *ini)
     }
 
 stream_setup:
+    if(profile_active){stream_diag_report(&pk,1);profile_active=0;}
     if (want_codec != HB_CODEC_AUTO && av.codec.codec != want_codec) {
         /* The headset cannot take what was picked: plain SBC, and the page
          * and this headset's settings say so. */
@@ -2551,6 +2610,8 @@ stream_setup:
     }
 
     memset(&pk, 0, sizeof pk);
+    pk.profile.began_us=stream_diag_us();
+    profile_active=1;
     hb_tune_init(&pk.tune);
     pk.av = &av;
     pk.enc = enc;
@@ -2575,6 +2636,7 @@ stream_setup:
         log_line("latency: auto, starting at %d ms (%s)", la.cur_ms,
                  g_prefs_have && g_prefs.lat_learned ? "learned for this headset" : "default");
     packer_size(&pk);
+    if(pk.direct)log_line("direct-sbc: PCM-clocked send, max 4 SBC frames/packet, 3 queued packets, 24 ms expiry; no synthetic silence");
     {
         /* Media queue from the first packet (tune_link() keeps it in step). */
         int pkt_ms = pk.per_pkt * pk.samples_per * 1000 / pk.rate_hz;
@@ -2871,7 +2933,7 @@ stream_setup:
          * clock (1024 frames at 48 kHz = 21.3 ms). */
         now = now_ms();
         ahead_ms = samples * 1000L / scfg.sample_rate - (now - t_start);
-        if (ahead_ms > 40) {
+        if ((!pk.direct || tone) && ahead_ms > 40) {
             (void)btlink_pump(link, (int)(ahead_ms - 40 > 10 ? 10 : ahead_ms - 40));
             continue;
         }
@@ -2879,7 +2941,28 @@ stream_setup:
             t_start = now - samples * 1000L / scfg.sample_rate;
         }
 
-        nframes = avcap2_session_read_s16(cap, pcm, PCM_CAP_FRAMES, &peak);
+        capture_began_us=stream_diag_us();
+        if(pk.direct && (!last_pcm_read_ms || now-last_pcm_read_ms>BQD_SBC_CAPTURE_GAP_MS)){
+            unsigned skipped=0;
+            nframes=avcap2_session_read_latest_s16(cap,pcm,PCM_CAP_FRAMES,&peak,&skipped);
+            if(skipped)log_line("direct-sbc: discarded %u stale PCM frames before encoding",skipped);
+        }else nframes = avcap2_session_read_s16(cap, pcm, PCM_CAP_FRAMES, &peak);
+        if(nframes>0)last_pcm_read_ms=now_ms();
+        capture_ended_us=stream_diag_us();
+        hb_diag_time_add(&pk.profile.capture,capture_began_us,capture_ended_us);
+        if(nframes>0){
+            pk.profile.pcm_frames+=(uint64_t)nframes;
+            if(pk.profile.last_delivery_us)hb_diag_time_add(&pk.profile.delivery,pk.profile.last_delivery_us,capture_ended_us);
+            pk.profile.last_delivery_us=capture_ended_us;
+        }else if(!nframes)pk.profile.empty++;
+        else pk.profile.hard++;
+        if (nframes < 0) {
+            log_line("stream: audio capture failed after bounded recovery");
+            diag_set("audio session", "FAILED: capture recovery exhausted; stream stopped");
+            (void)diag_save();
+            write_status("error audio-capture %s", ini->name[0] ? ini->name : "-");
+            goto done;
+        }
         if (nframes > 0) {
             reads_ok++;
             if (peak > peak_seen) peak_seen = peak;
@@ -2887,6 +2970,7 @@ stream_setup:
             /* No capture data: keep the clock running with silence, only
              * once we are behind the audio clock. */
             if (nframes == 0) reads_empty++;
+            if(pk.direct && !tone){(void)btlink_pump(link,1);continue;}
             if (ahead_ms > 0) { usleep(1000); continue; }
             nframes = PCM_CAP_FRAMES / 4;      /* silence keeps the sink fed */
             fills++;
@@ -2904,7 +2988,10 @@ stream_setup:
             if (op > out_peak) out_peak = op;
         }
         if (!packer_feed(&pk, pcm, nframes)) break;
+        if(pk.direct)packer_flush(&pk);
         samples += nframes;
+        hb_diag_time_add(&pk.profile.work,capture_began_us,stream_diag_us());
+        stream_diag_report(&pk,0);
 
         if (now - t_stat >= 1000) {
             {
@@ -2924,19 +3011,26 @@ stream_setup:
                 if (sx > 0) sink_last_x10 = sx;
                 else sx = sink_last_x10;
                 hb_latency_estimate(&lat, pkt_ms, q10, (int)btlink_acl_gap_avg(link), sx);
+                diag_set("latency basis","total %d ms = capture %d + packet %d + queue %d + radio %d + receiver %d; receiver %s; end-to-end not measured",
+                         lat.total_ms,lat.capture_ms,lat.packet_ms,lat.queue_ms,lat.radio_ms,lat.sink_ms,lat.sink_reported?"reported by device":"ASSUMED default");
                 pk.bl_sum = pk.bl_n = 0;
             }
-            log_line("stream: pkts=%ld sbc=%ld reads ok=%ld empty=%ld overrun=%llu fills=%ld peak=%.4f "
-                     "out=%.3f gain=%.2f hs=%d backlog=%d bitpool=%d frames/pkt=%d (mtu %d, frame %d B) dropped=%ld",
-                     pk.pkts, pk.frames,
-                     reads_ok, reads_empty, (unsigned long long)avcap2_session_overruns(cap),
-                     fills, (double)peak_seen, out_peak / 1000.0,
-                     gain_milli / 1000.0, hs_vol, btlink_tx_backlog(link),
-                     menc_bitpool(enc), pk.per_pkt, pk.mtu, pk.fsz, btlink_tx_dropped(link));
+            {
+                avcap2_stats cs;
+                avcap2_session_stats(cap, &cs);
+                log_line("stream: pkts=%ld sbc=%ld reads ok=%ld empty=%ld overrun=%llu fills=%ld peak=%.4f "
+                         "out=%.3f gain=%.2f hs=%d backlog=%d bitpool=%d frames/pkt=%d (mtu %d, frame %d B) dropped=%ld",
+                         pk.pkts, pk.frames,
+                         reads_ok, reads_empty, (unsigned long long)cs.overrun, fills,
+                         (double)peak_seen, out_peak / 1000.0,
+                         gain_milli / 1000.0, hs_vol, btlink_tx_backlog(link),
+                         menc_bitpool(enc), pk.per_pkt, pk.mtu, pk.fsz, btlink_tx_dropped(link));
+            }
             CTL_LOCK(&g_ctl);
             g_ctl.pkts = pk.pkts;
             g_ctl.frames = pk.frames;
             g_ctl.empty_reads = reads_empty;
+            avcap2_session_stats(cap, &g_ctl.capture);
             g_ctl.peak_milli = (int)(peak_seen * 1000.f);
             g_ctl.out_peak_milli = out_peak;
             g_ctl.backlog = btlink_tx_backlog(link);
@@ -3038,7 +3132,7 @@ stream_setup:
                         log_line("latency: auto: %d drops/min with RSSI %d, LQ %d: the link cannot carry "
                                  "the stream (credits %lu of %lu sent, limit %d), buffer kept at %d ms",
                                  dpm, rssi, lqv, lcred, lsent, llim, la.cur_ms);
-                        ctl_event_locked(&g_ctl, "Dropouts come from the link, not the buffer");
+                        ctl_event_locked(&g_ctl, "Dropouts persist despite a larger buffer");
                     }
                     if (la.recover) {
                         /* A step down flooded: back up at once and start the
@@ -3120,7 +3214,7 @@ stream_setup:
                         char evl[HB_EVENT_LEN];
                         g_ctl.lat_backoff_ms = bo.extra_ms;
                         if (bo.extra_ms > was)
-                            snprintf(evl, sizeof evl, "Weak signal, latency raised by %d ms for now", bo.extra_ms);
+                            snprintf(evl, sizeof evl, "Link drops, buffer target raised by %d ms for now", bo.extra_ms);
                         else if (bo.extra_ms)
                             snprintf(evl, sizeof evl, "Signal better, latency %d ms above your setting", bo.extra_ms);
                         else
@@ -3228,15 +3322,19 @@ stream_setup:
             }
         }
     }
-    log_line("stream: ended — pkts=%ld sbc=%ld reads ok=%ld empty=%ld overrun=%llu fills=%ld",
-             pk.pkts, pk.frames, reads_ok, reads_empty,
-             (unsigned long long)avcap2_session_overruns(cap), fills);
+    {
+        avcap2_stats cs;
+        avcap2_session_stats(cap, &cs);
+        log_line("stream: ended — pkts=%ld sbc=%ld reads ok=%ld empty=%ld overrun=%llu fills=%ld",
+                 pk.pkts, pk.frames, reads_ok, reads_empty, (unsigned long long)cs.overrun, fills);
+    }
     if (rc == RUN_DROPPED || rc == RUN_AWAY) {
         write_status("disconnected");
         ctl_set_state("disconnected", ini->name);
     }
 
 done:
+    if(profile_active)stream_diag_report(&pk,1);
     if (cap) avcap2_session_close(cap);
     if (enc) menc_close(enc);
     if (av.link) avdtp_teardown(&av);
@@ -3998,6 +4096,7 @@ out:
         pthread_join(g_rest_thr, NULL);
     }
     http_stop();
+    native_audio_shutdown();
     persist_gain_if_dirty();
     {
         int cc = btlink_last_close_confirmed();

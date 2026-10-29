@@ -2,6 +2,7 @@
  * single background thread. All state goes through hb_ctl (mutex); the
  * stream loop applies the requests. Developed by X-F1REBALL-X. */
 #include "http.h"
+#include "native_audio.h"
 #include "webpage.h"
 #include "start_html.h"
 #include "tile.h"
@@ -104,7 +105,7 @@ static int token_ok(const char *got, const char *want)
 static int is_write_path(const char *path)
 {
     static const char *const w[] = {
-        "/api/select", "/api/forget", "/api/scan", "/api/reconnect", "/api/volume",
+        "/api/native/live", "/api/native/start", "/api/native/stop", "/api/select", "/api/forget", "/api/scan", "/api/reconnect", "/api/volume",
         "/api/headset", "/api/mute", "/api/tone", "/api/connect", "/api/disconnect",
         "/api/stop", "/api/reset", "/api/latency", "/api/codec", "/api/eq", "/api/clean", "/api/night",
         "/api/hci", "/api/game", "/api/backup", "/api/restore", "/api/keyvol", "/api/block",
@@ -182,7 +183,10 @@ static int status_json(hb_ctl *c, char *o, int max)
         "\"battery\":{\"status\":\"%s\",\"level\":%d,\"pct\":%d,\"src\":\"%s\",\"none\":%d},\"hs_moves\":%d,"
         "\"link\":{\"score\":%d,\"rssi\":%d,\"lq\":%d,\"drops_min\":%d},"
         "\"night\":{\"on\":%d,\"db10\":%d},\"batt_alert\":{\"level\":%d,\"seq\":%u},\"rest_watch\":%d,\"key_vol\":%d,"
-        "\"game\":{\"avail\":%d,\"id\":\"%s\",\"name\":\"%s\",\"profile\":%d,\"active\":%d,\"exact\":%d,\"from\":\"%s\",\"dirty\":%d,\"saved\":%s},\"events\":%s}",
+        "\"game\":{\"avail\":%d,\"id\":\"%s\",\"name\":\"%s\",\"profile\":%d,\"active\":%d,\"exact\":%d,\"from\":\"%s\",\"dirty\":%d,\"saved\":%s},\"events\":%s,"
+        "\"capture\":{\"state\":%d,\"age_ms\":%ld,\"pending_frames\":%d,\"last_error\":%u,"
+        "\"valid\":%llu,\"empty\":%llu,\"overrun\":%llu,\"recoveries\":%llu,\"no_data\":%llu,"
+        "\"invalid\":%llu,\"other\":%llu,\"nonfinite\":%llu}}",
         c->version, c->token, !strcmp(c->state, "streaming"), det, why, st, dev, url, c->gain_pct, c->muted, c->tone, c->paused,
         c->hs_volume, c->avrcp & 1, (c->avrcp >> 1) & 1, (c->avrcp >> 2) & 1, (c->avrcp >> 3) & 1,
         c->pkts, c->frames, c->empty_reads, c->peak_milli / 1000.0,
@@ -202,7 +206,12 @@ static int status_json(hb_ctl *c, char *o, int max)
         c->batt_pct < 0 ? "" : c->batt_src == 1 ? "hf" : c->batt_src == 2 ? "apple" : "", c->batt_none, c->hs_moves,
         c->link_score, c->link_rssi == 127 ? 0 : c->link_rssi, c->link_lq, c->drops_min,
         c->night, c->night_db10, c->batt_alert, c->batt_alert_seq, c->rest_watch, c->key_vol,
-        c->game_avail, c->game_id, gname, c->game_profile, c->game_active, c->game_exact, gfrom, c->game_dirty, gl, ev);
+        c->game_avail, c->game_id, gname, c->game_profile, c->game_active, c->game_exact, gfrom, c->game_dirty, gl, ev,
+        c->capture.state, c->capture.age_ms, c->capture.pending_frames, (unsigned)c->capture.last_error,
+        (unsigned long long)c->capture.valid, (unsigned long long)c->capture.empty,
+        (unsigned long long)c->capture.overrun, (unsigned long long)c->capture.recoveries,
+        (unsigned long long)c->capture.no_data, (unsigned long long)c->capture.invalid,
+        (unsigned long long)c->capture.other, (unsigned long long)c->capture.nonfinite);
 }
 
 static int respond(char *out, int max, int code, const char *ctype,
@@ -493,6 +502,36 @@ int http_handle(hb_ctl *c, const char *req, int reqlen, char *out, int max)
             return respond(out, max, 405, "application/json", "{\"error\":\"use POST\"}", 20);
         if (!header_value(req, reqlen, "X-HB-Token", tok, sizeof tok) || !token_ok(tok, c->token))
             return respond(out, max, 403, "application/json", "{\"error\":\"token\"}", 17);
+    }
+
+
+    if (!strcmp(path,"/api/native")) {
+        bl=native_audio_json(body,sizeof body);return respond(out,max,200,"application/json",body,bl);
+    }
+    if (!strcmp(path,"/api/native/stop")) {
+        native_audio_cancel();bl=native_audio_json(body,sizeof body);return respond(out,max,200,"application/json",body,bl);
+    }
+    if (!strcmp(path,"/api/native/live")) {
+        char ip[32];int port=0,allowed;
+        if(!query_word(q,"ip",ip,sizeof ip)||!query_int(q,"port",&port)){const char *e="{\"error\":\"IPv4 address and UDP port required\"}";return respond(out,max,400,"application/json",e,(int)strlen(e));}
+        CTL_LOCK(c);allowed=c->paused&&(!strcmp(c->state,"disconnected")||!strcmp(c->state,"idle"));CTL_UNLOCK(c);
+        if(!allowed){const char *e="{\"error\":\"Disconnect Bluetooth before live audio\"}";return respond(out,max,409,"application/json",e,(int)strlen(e));}
+        int rc=native_audio_live(ip,port);
+        if(rc){const char *e="{\"error\":\"Invalid destination, capture busy or sender unavailable\"}";return respond(out,max,rc==-2?400:409,"application/json",e,(int)strlen(e));}
+        bl=native_audio_json(body,sizeof body);return respond(out,max,200,"application/json",body,bl);
+    }
+    if (!strcmp(path,"/api/native/start")) {
+        int fmt=0,seconds=0,allowed,rc;
+        if(!query_int(q,"format",&fmt)||!query_int(q,"seconds",&seconds)||(fmt!=1&&fmt!=2)||(seconds!=12&&seconds!=30&&seconds!=60))
+            return respond(out,max,400,"application/json","{\"error\":\"bad native parameters\"}",33);
+        CTL_LOCK(c);allowed=c->paused&&(!strcmp(c->state,"disconnected")||!strcmp(c->state,"idle"));CTL_UNLOCK(c);
+        if(!allowed){const char *e="{\"error\":\"Disconnect Bluetooth before recording\"}";return respond(out,max,409,"application/json",e,(int)strlen(e));}
+        rc=native_audio_start(fmt,seconds);
+        if(rc){const char *e="{\"error\":\"Capture busy or recorder unavailable; wait and retry\"}";return respond(out,max,409,"application/json",e,(int)strlen(e));}
+        bl=native_audio_json(body,sizeof body);return respond(out,max,200,"application/json",body,bl);
+    }
+    if(native_audio_busy()&&(!strcmp(path,"/api/connect")||!strcmp(path,"/api/reconnect")||!strcmp(path,"/api/select")||!strcmp(path,"/api/reset"))){
+        const char *e="{\"error\":\"Stop native recording before connecting Bluetooth\"}";return respond(out,max,409,"application/json",e,(int)strlen(e));
     }
 
 #ifndef HB_HTTP_HOST_TEST
@@ -901,6 +940,20 @@ static int send_gameicon(int fd, const char *id)
     return 1;
 }
 
+
+static int send_native_download(int fd,const char *req){
+ int raw;if(!strncmp(req,"GET /api/native/download?raw=1 HTTP/",36))raw=1;
+ else if(!strncmp(req,"GET /api/native/download HTTP/",30))raw=0;
+ else return 0;
+ char name[96],hdr[384],buf[16384];int f=native_audio_download(raw,name,sizeof name);
+ if(f<0){const char *e="HTTP/1.1 404 Not Found\r\nContent-Length: 19\r\nConnection: close\r\n\r\nNo recording ready\n";send_all(fd,e,(int)strlen(e));return 1;}
+ long size=(long)lseek(f,0,SEEK_END);lseek(f,0,SEEK_SET);
+ if(size<0){close(f);return 0;}
+ int n=snprintf(hdr,sizeof hdr,"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"%s\"\r\nContent-Length: %ld\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",name,size);
+ if(!send_all(fd,hdr,n)){while(size>0){n=(int)read(f,buf,size<(long)sizeof buf?(size_t)size:sizeof buf);if(n<=0||send_all(fd,buf,n))break;size-=n;}}
+ close(f);return 1;
+}
+
 static void serve_one(int fd)
 {
     static char req[HB_BACKUP_MAX + 4096], out[196608];   /* the page (~75 KB with all languages) */
@@ -930,6 +983,7 @@ static void serve_one(int fd)
         if (need >= 0 && got >= need) break;
     }
     if (got <= 0) return;
+    if(send_native_download(fd,req))return;
     {
         char gid[16];
         if (http_gameicon_id(req, got, gid, sizeof gid) && send_gameicon(fd, gid)) return;

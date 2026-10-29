@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BossQuickDock Receiver</title>
+<link rel="icon" href="/a/icon.png">
+<style>
+/* Look and feel copied from the console's BossQuickDock page (src/web/ui.html). */
+@font-face{font-family:"BQ Inter";src:url(/a/font.woff2) format("woff2");font-weight:300 900;font-display:swap}
+:root{--bg:#020306;--glass:rgba(13,17,28,.78);--glass2:rgba(22,29,46,.86);--line:rgba(110,150,255,.16);--line2:rgba(120,160,255,.32);
+--ink:#f2f5fc;--ink2:#b8c2d8;--mute:#6f7b95;--blue:#2f7bff;--blue2:#5aa0ff;--violet:#9b5cff;--cyan:#38d6ff;--good:#3ddc97;--warn:#ffb547;--bad:#ff4d6d;
+--silver:linear-gradient(180deg,#fff 0%,#e3e8f2 40%,#9aa5ba 100%);--grad:linear-gradient(90deg,#2f7bff,#9b5cff);--r:1.25rem}
+*{box-sizing:border-box;margin:0}
+html{font-size:15px;background:var(--bg)}
+@media(min-width:1180px) and (min-height:600px){html{font-size:clamp(12px,min(1.02vw,1.85vh),26px)}}
+body{min-height:100vh;color:var(--ink);font:400 1rem/1.4 "BQ Inter","SST","Segoe UI",system-ui,sans-serif;overflow-x:hidden}
+button,input{font:inherit;color:inherit}
+.amb{position:fixed;inset:0;z-index:-2;overflow:hidden;background:radial-gradient(90vw 70vh at 50% 115%,rgba(47,123,255,.16),transparent 62%),var(--bg)}
+.amb i{position:absolute;border-radius:50%;animation:float 26s ease-in-out infinite alternate;will-change:transform}
+.amb .o1{width:52vw;height:52vw;left:-16vw;top:-24vw;background:radial-gradient(circle,rgba(30,80,255,.4),rgba(30,80,255,.12) 40%,transparent 70%)}
+.amb .o2{width:44vw;height:44vw;right:-14vw;top:6vh;background:radial-gradient(circle,rgba(130,60,255,.34),rgba(130,60,255,.1) 40%,transparent 70%);animation-duration:32s}
+.amb .o3{width:36vw;height:36vw;left:34vw;bottom:-24vw;background:radial-gradient(circle,rgba(20,170,255,.22),rgba(20,170,255,.07) 40%,transparent 70%);animation-duration:38s}
+.amb:after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 1px,transparent 1px 3px)}
+@keyframes float{to{transform:translate(7vw,5vh) scale(1.18)}}
+.app{display:flex;flex-direction:column;min-height:100vh;padding:1.1rem 1.6rem 1rem}
+@media(min-width:1180px) and (min-height:600px){.app{height:100vh}}
+.top{display:flex;align-items:center;gap:1.4rem;padding-bottom:1rem;position:relative}
+.top:after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:linear-gradient(90deg,transparent,var(--blue) 25%,var(--violet) 75%,transparent);opacity:.7}
+.brand{display:flex;align-items:center;gap:.9rem;min-width:0}
+.brand img{width:4.6rem;height:3.4rem;border-radius:.8rem;object-fit:cover;border:1px solid var(--line2);box-shadow:0 0 1.4rem rgba(47,123,255,.4)}
+.wm{display:flex;flex-direction:column;line-height:.92}
+.wm b{font-size:2rem;font-weight:900;letter-spacing:.05em;background:var(--silver);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 .15rem .3rem rgba(0,0,0,.7))}
+.wm span{display:flex;align-items:center;gap:.45rem;margin-top:.22rem;font-size:.72rem;font-weight:800;letter-spacing:.42em;color:var(--blue2);text-shadow:0 0 .8rem rgba(47,123,255,.9)}
+.wm span:before,.wm span:after{content:"";width:1rem;height:1px;background:var(--blue)}
+.credit{display:flex;flex-direction:column;justify-content:center;margin-inline-start:.4rem;padding:.35rem .9rem;border-inline-start:2px solid var(--blue);line-height:1.15}
+.credit small{font-size:.66rem;letter-spacing:.18em;text-transform:uppercase;color:var(--ink2)}
+.credit b{font-size:1.15rem;font-weight:900;background:linear-gradient(90deg,#5aa0ff,#b48cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.credit em{font-style:normal;font-size:.68rem;color:var(--ink2)}
+.tabs{display:flex;gap:.35rem;margin-inline-start:1.2rem;padding:.3rem;border-radius:2rem;background:rgba(8,11,20,.6);border:1px solid var(--line)}
+.tab{position:relative;min-height:2.6rem;padding:0 1.3rem;border:0;border-radius:2rem;background:none;font-weight:700;font-size:.95rem;color:var(--ink2);cursor:pointer;outline:none;transition:color .15s,background .15s}
+.tab.on{color:#fff;background:linear-gradient(180deg,rgba(60,130,255,.95),rgba(36,92,220,.95));box-shadow:0 .25rem 1.1rem rgba(47,123,255,.45)}
+.tab:focus-visible{box-shadow:0 0 0 2px #fff,0 0 1.2rem rgba(47,123,255,.7)}
+.sp{flex:1}
+.pill{display:flex;align-items:center;gap:.6rem;padding:.5rem 1.1rem;border-radius:2rem;background:rgba(8,11,20,.7);border:1px solid var(--line2);font-weight:700;font-size:.9rem;white-space:nowrap}
+.pill i{width:.62rem;height:.62rem;border-radius:50%;background:var(--mute)}
+.pill.ok{border-color:rgba(47,123,255,.7);box-shadow:0 0 1.2rem rgba(47,123,255,.35)}.pill.ok i{background:var(--blue2);box-shadow:0 0 .7rem var(--blue2)}
+.pill.wait i{background:var(--warn);animation:blink 1s infinite}.pill.bad{border-color:rgba(255,77,109,.6)}.pill.bad i{background:var(--bad)}
+@keyframes blink{50%{opacity:.2}}
+.clock{text-align:end;line-height:1.05}.clock b{display:block;font-size:1.55rem;font-weight:300;letter-spacing:.04em;font-variant-numeric:tabular-nums}
+.clock span{font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;color:var(--ink2)}
+.views{flex:1;min-height:0;margin-top:1.1rem;position:relative}
+.view{display:none;height:100%;animation:in .35s ease-out}
+.view.on{display:grid}
+@keyframes in{from{opacity:0;transform:translateY(.8rem)}}
+.card{position:relative;min-width:0;min-height:0;padding:1.15rem 1.35rem;border-radius:var(--r);background:linear-gradient(180deg,rgba(44,62,110,.28),rgba(10,13,22,.8) 8rem),var(--glass);
+border:1px solid var(--line);box-shadow:0 1.4rem 2.8rem rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.05);display:flex;flex-direction:column;gap:.85rem;overflow:hidden}
+.card:before{content:"";position:absolute;left:1.4rem;right:1.4rem;top:0;height:2px;background:linear-gradient(90deg,transparent,var(--acc,var(--blue)),transparent)}
+.ct{display:flex;align-items:center;gap:.6rem;font-size:.74rem;font-weight:800;letter-spacing:.24em;text-transform:uppercase;color:#cddcff}
+.ct:before{content:"";width:.5rem;height:.5rem;border-radius:50%;background:var(--acc,var(--blue));box-shadow:0 0 .7rem var(--acc,var(--blue))}
+.ct .sp{flex:1}
+.k{color:var(--mute);font-size:.85rem}
+.n{font-variant-numeric:tabular-nums;font-weight:800}
+.b{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:2.9rem;padding:0 1.3rem;border-radius:2rem;border:1px solid var(--line2);
+background:rgba(26,35,58,.9);font-weight:700;cursor:pointer;outline:none;white-space:nowrap;transition:transform .12s,box-shadow .12s,background .12s}
+.b:hover,.b:focus-visible{border-color:var(--blue2);box-shadow:0 0 0 2px rgba(255,255,255,.9),0 0 1.4rem rgba(47,123,255,.6);transform:scale(1.04);z-index:2}
+.b.p{background:linear-gradient(180deg,#3d8bff,#1f5fe0);border-color:#5b9bff;color:#fff;box-shadow:0 .3rem 1.2rem rgba(47,123,255,.35)}
+.b.r{color:#ff8da1;border-color:rgba(255,77,109,.5)}
+.b.sm{min-height:2.3rem;padding:0 1rem;font-size:.85rem}
+.b.xl{min-height:3.5rem;padding:0 2.2rem;font-size:1.15rem}
+.b.on{background:linear-gradient(180deg,#3d8bff,#1f5fe0);color:#fff;border-color:#5b9bff}
+.b:disabled{opacity:.35;pointer-events:none}
+.row{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+.seg{display:flex;gap:.35rem;padding:.3rem;border-radius:2rem;background:rgba(5,8,14,.6);border:1px solid var(--line)}
+.seg .b{flex:1;min-height:2.6rem;border:0;background:none;font-size:.9rem;flex-direction:column;gap:0;line-height:1.1}
+.seg .b small{font-size:.7rem;font-weight:600;color:var(--ink2)}
+.seg .b.on{background:linear-gradient(180deg,#3d8bff,#1f5fe0)}.seg .b.on small{color:#dfeaff}
+/* ---------- home ---------- */
+#vHome{grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:1.1rem}
+.hero{grid-row:1/3;--acc:var(--blue);justify-content:space-between;padding:0;background:#03050a}
+.hero .art{position:absolute;inset:0;background:var(--hero) center 30%/cover no-repeat;opacity:.95}
+.hero .art:after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(2,3,6,.1) 0%,rgba(2,3,6,.35) 40%,rgba(2,3,6,.96) 72%)}
+.hero .hin{position:relative;z-index:1;display:flex;flex-direction:column;gap:.8rem;padding:1.3rem 1.5rem;margin-top:auto}
+.state{display:inline-flex;align-items:center;gap:.5rem;align-self:flex-start;padding:.3rem .85rem;border-radius:2rem;font-size:.72rem;font-weight:800;letter-spacing:.2em;text-transform:uppercase;
+background:rgba(47,123,255,.18);border:1px solid rgba(90,160,255,.5);color:#cfe0ff}
+.state.off{background:rgba(255,255,255,.06);border-color:var(--line2);color:var(--ink2)}
+.state.wait{background:rgba(255,181,71,.14);border-color:rgba(255,181,71,.5);color:#ffe2b3}
+.dev{font-size:2.5rem;font-weight:900;line-height:1.05;letter-spacing:-.01em;text-shadow:0 .3rem 1.2rem rgba(0,0,0,.8)}
+canvas#wave{width:100%;height:4.2rem;display:block}
+.chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.chip{padding:.22rem .7rem;border-radius:1rem;font-size:.78rem;font-weight:700;background:rgba(255,255,255,.07);border:1px solid var(--line2);color:var(--ink2)}
+.chip.hi{background:rgba(47,123,255,.2);border-color:rgba(90,160,255,.55);color:#dfeaff}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.6rem}
+.st{padding:.6rem .75rem;border-radius:.9rem;background:rgba(8,11,20,.7);border:1px solid var(--line)}
+.st .k{font-size:.7rem;letter-spacing:.12em;text-transform:uppercase}.st .n{display:block;font-size:1.25rem;margin-top:.1rem}
+.hint{color:var(--ink2);font-size:.92rem;min-height:1.3em}
+.howto{list-style:none;padding:0;display:flex;flex-direction:column;gap:.75rem;counter-reset:s}
+.howto li{position:relative;padding:.25rem 0 .25rem 2.7rem;color:var(--ink2);line-height:1.4;counter-increment:s;min-height:1.9rem}
+.howto li:before{content:counter(s);position:absolute;left:0;top:0;width:1.9rem;height:1.9rem;border-radius:50%;display:flex;align-items:center;justify-content:center;
+font-weight:900;font-size:.9rem;color:#fff;background:var(--grad);box-shadow:0 0 .8rem rgba(47,123,255,.5)}
+.howto b,.help b{color:#fff}
+.tip{position:relative;padding:.6rem .8rem .6rem 2.4rem;border-radius:.9rem;background:rgba(255,181,71,.08);border:1px solid rgba(255,181,71,.35);color:#ffe2b3;font-size:.85rem;line-height:1.4}
+.tip:before{content:"!";position:absolute;left:.75rem;top:.68rem;display:flex;align-items:center;justify-content:center;width:1.2rem;height:1.2rem;border-radius:50%;background:var(--warn);color:#000;font-weight:900;font-size:.75rem}
+/* ---------- lists / forms ---------- */
+#vSet,#vHelp{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1.1rem;align-content:start;overflow-y:auto;padding:.15rem}
+.list{display:flex;flex-direction:column;gap:.55rem;overflow-y:auto;min-height:0;max-height:16rem;padding:.15rem}
+.it{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:.9rem;padding:.7rem .85rem;border-radius:1rem;background:rgba(255,255,255,.035);border:1px solid var(--line);cursor:pointer;text-align:start;outline:none}
+.it:hover,.it:focus-visible{border-color:var(--blue2)}
+.it.on{background:linear-gradient(90deg,rgba(47,123,255,.22),rgba(155,92,255,.06));border-color:rgba(90,160,255,.55)}
+.it .dot{width:1.2rem;height:1.2rem;border-radius:50%;border:2px solid var(--line2)}
+.it.on .dot{border-color:var(--blue2);background:radial-gradient(circle,var(--blue2) 45%,transparent 50%)}
+.it b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.it .k{font-size:.76rem}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.45rem 1.2rem;font-size:.92rem}.kv .n{text-align:end;overflow:hidden;text-overflow:ellipsis}
+.kv .good{color:var(--good)}.kv .bad{color:#ff8da1}.kv .warn{color:var(--warn)}
+input.tx{min-height:2.7rem;padding:0 1rem;border-radius:2rem;border:1px solid var(--line2);background:rgba(5,8,14,.75);outline:none;flex:1;min-width:0}
+input.tx:focus{border-color:var(--blue2);box-shadow:0 0 1rem rgba(47,123,255,.5)}
+.spin{display:inline-block;width:.9rem;height:.9rem;border-radius:50%;border:2px solid rgba(255,255,255,.2);border-top-color:var(--blue2);animation:sp .8s linear infinite;vertical-align:middle}
+@keyframes sp{to{transform:rotate(360deg)}}
+.help ul{padding-inline-start:1.1rem;display:flex;flex-direction:column;gap:.5rem;color:var(--ink2);line-height:1.4}
+.foot{display:flex;align-items:center;gap:1.5rem;margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--line);font-size:.82rem;color:var(--ink2)}
+.foot .cr{margin-inline-start:auto;font-size:.85rem;text-align:end}.foot .cr b{color:#fff}.foot .cr i{font-style:normal;font-weight:800;color:#7fb0ff}
+.msg{position:fixed;left:50%;top:1.2rem;transform:translateX(-50%);z-index:90;max-width:80vw;padding:.6rem 1.4rem;border-radius:2rem;background:var(--bad);color:#fff;font-weight:700;box-shadow:0 .8rem 2rem rgba(0,0,0,.6);text-align:center}
+.msg:empty{display:none}.msg.info{background:var(--glass2);border:1px solid var(--line2)}.msg.good{background:linear-gradient(180deg,#3d8bff,#1f5fe0)}
+@media(max-width:1179px),(max-height:599px){
+ .credit em{display:none}
+ #vHome{grid-template-columns:minmax(0,1fr);grid-template-rows:auto}
+ .hero{grid-row:auto;min-height:28rem}
+ .tabs{order:5;width:100%;margin:0;justify-content:space-between}.top{flex-wrap:wrap}.tab{flex:1;padding:0 .6rem}
+}
+@media(max-width:759px){
+ html{font-size:14px}.app{padding:.8rem}
+ #vSet,#vHelp{grid-template-columns:minmax(0,1fr)}
+ .clock{display:none}.stats{grid-template-columns:1fr 1fr}.dev{font-size:1.9rem}
+ .foot .cr{margin:0;text-align:center;width:100%}
+}
+@media(prefers-reduced-motion:reduce){.amb i,.view{animation:none}}
+</style>
+</head>
+<body>
+<div class="amb" aria-hidden="true"><i class="o1"></i><i class="o2"></i><i class="o3"></i></div>
+<div class="msg" id="msg" role="status" aria-live="polite"></div>
+<div class="app">
+<header class="top">
+ <div class="brand"><img src="/a/mini.jpg" alt=""><div class="wm"><b>BOSS</b><span>QUICK DOCK</span></div><div class="credit"><small data-i="appName">PC Receiver</small><b>RamalhoBoss</b><em data-i="based">based on HearBridge by X-F1REBALL-X</em></div></div>
+ <nav class="tabs" id="tabs">
+  <button class="tab on" data-v="vHome" data-i="tHome">Início</button><button class="tab" data-v="vSet" data-i="tSet">Definições</button><button class="tab" data-v="vHelp" data-i="tHelp">Ajuda</button>
+ </nav>
+ <div class="sp"></div>
+ <div class="pill wait" id="pill"><i></i><span id="pillt">…</span></div>
+ <div class="clock"><b id="clk">--:--</b><span id="clkd"></span></div>
+</header>
+<main class="views">
+<!-- ================= HOME ================= -->
+<section class="view on" id="vHome">
+ <div class="card hero" style="--hero:url(/a/hero.jpg)">
+  <div class="art"></div>
+  <div class="hin">
+   <span class="state off" id="hstate">—</span>
+   <div class="dev" id="hdev">—</div>
+   <canvas id="wave"></canvas>
+   <div class="chips" id="hchips"></div>
+   <div class="stats">
+    <div class="st"><span class="k" data-i="sLat">Atraso no PC</span><span class="n" id="sLat">—</span></div>
+    <div class="st"><span class="k" data-i="sRx">Recebidos</span><span class="n" id="sRx">—</span></div>
+    <div class="st"><span class="k" data-i="sLost">Perdidos</span><span class="n" id="sLost">—</span></div>
+    <div class="st"><span class="k" data-i="sUp">A tocar há</span><span class="n" id="sUp">—</span></div>
+   </div>
+   <div class="row"><button class="b p xl" id="go">—</button><button class="b" id="bt" data-i="btBack">Voltar ao Bluetooth</button></div>
+   <p class="hint" id="hint"></p>
+  </div>
+ </div>
+ <div class="card" style="--acc:var(--cyan)">
+  <div class="ct" data-i="howTitle">Como usar</div>
+  <ol class="howto">
+   <li data-h="how1"></li><li data-h="how2"></li><li data-h="how3"></li><li data-h="how4"></li><li data-h="how5"></li>
+  </ol>
+  <div class="tip" data-h="howTip"></div>
+ </div>
+ <div class="card" style="--acc:var(--violet)">
+  <div class="ct">PlayStation 5<span class="sp"></span><button class="b p sm" id="find" data-i="find">Procurar PS5</button></div>
+  <div class="row"><input class="tx" id="ip" maxlength="15" autocomplete="off" spellcheck="false" inputmode="decimal"><button class="b sm" id="ipSave" data-i="save">Guardar</button></div>
+  <div class="kv" id="ps5kv"></div>
+ </div>
+</section>
+<!-- ================= SETTINGS ================= -->
+<section class="view" id="vSet">
+ <div class="card" style="--acc:var(--cyan)">
+  <div class="ct" data-i="outTitle">Saída de som</div>
+  <p class="k" data-i="outNote">Onde o som da PS5 toca neste PC. Muda logo, sem parar.</p>
+  <div class="list" id="outL"></div>
+ </div>
+ <div class="card" style="--acc:var(--violet)">
+  <div class="ct" data-i="bufTitle">Atraso</div>
+  <div class="seg" id="buf">
+   <button class="b" data-b="30"><span data-i="bMin">Mínimo</span><small>30 ms</small></button>
+   <button class="b" data-b="50"><span data-i="bNorm">Normal</span><small>50 ms</small></button>
+   <button class="b" data-b="100"><span data-i="bStab">Estável</span><small>100 ms</small></button>
+   <button class="b" data-b="150"><span data-i="bMax">Máximo</span><small>150 ms</small></button>
+  </div>
+  <p class="k" data-i="bufNote">Menos atraso é melhor para jogar. Se o som cortar, escolhe Estável. Muda logo, sem parar.</p>
+  <div class="ct" style="margin-top:.4rem" data-i="langTitle">Idioma</div>
+  <div class="seg" id="lang"><button class="b" data-l="en">English</button><button class="b" data-l="pt">Português</button></div>
+ </div>
+ <div class="card" style="--acc:var(--warn)">
+  <div class="ct" data-i="advTitle">Avançado</div>
+  <span class="k" data-i="portNote">Porta UDP: só muda se a PS5 estiver configurada para outra porta.</span>
+  <div class="row"><input class="tx" id="port" maxlength="5" inputmode="numeric"><button class="b sm" id="portSave" data-i="save">Guardar</button></div>
+  <div class="row"><button class="b sm" id="report" data-i="report">Guardar relatório</button><span class="k" data-i="reportNote">Para pedir ajuda: guarda e envia o ficheiro.</span></div>
+ </div>
+ <div class="card" style="--acc:var(--blue)">
+  <div class="ct" data-i="detTitle">Detalhes</div>
+  <div class="kv" id="det"></div>
+ </div>
+</section>
+<!-- ================= HELP ================= -->
+<section class="view help" id="vHelp">
+ <div class="card" style="--acc:var(--bad)"><div class="ct" data-i="h1t">Não ouço nada</div><ul data-h="h1"></ul></div>
+ <div class="card" style="--acc:var(--warn)"><div class="ct" data-i="h2t">O som corta ou falha</div><ul data-h="h2"></ul></div>
+ <div class="card" style="--acc:var(--blue)"><div class="ct" data-i="h3t">Voltar aos auscultadores</div><ul data-h="h3"></ul></div>
+ <div class="card" style="--acc:var(--violet)"><div class="ct" data-i="h4t">Sobre o atraso</div><ul data-h="h4"></ul></div>
+</section>
+</main>
+<footer class="foot">
+ <span>BossQuickDock Receiver v{{VERSION}}</span><span id="fpc"></span>
+ <span class="cr">Developed by <b>RamalhoBoss</b> · <span data-i="basedOn">based on</span> <i>HearBridge PS5</i> by X-F1REBALL-X</span>
+</footer>
+</div>
+<script>
+var TOKEN='{{TOKEN}}',S=null,L='',OUT=null,LASTMSG=-1,FAILS=0;
+var T={
+pt:{appName:'PC Receiver',based:'baseado no HearBridge de X-F1REBALL-X',basedOn:'baseado no',tHome:'Início',tSet:'Definições',tHelp:'Ajuda',
+ sLat:'Atraso no PC',sRx:'Recebidos',sLost:'Perdidos',sUp:'A tocar há',btBack:'Voltar ao Bluetooth',goOn:'Ouvir no PC',goOff:'Parar',
+ howTitle:'Como usar',find:'Procurar PS5',save:'Guardar',ipPh:'IP da PS5, ex.: 192.168.1.73',
+ how1:'Na PS5, abre a <b>BossQuickDock</b> (versão 1.5.1 ou mais recente).',
+ how2:'Liga este PC à <b>mesma rede</b> da PS5 (Wi-Fi ou cabo).',
+ how3:'Carrega em <b>Procurar PS5</b>, ou escreve o IP da PS5 e carrega em <b>Guardar</b>.',
+ how4:'Carrega em <b>Ouvir no PC</b>. O som da PS5 passa a sair neste PC.',
+ how5:'Para voltar aos auscultadores, carrega em <b>Voltar ao Bluetooth</b>.',
+ howTip:'Na primeira vez, se o Windows perguntar pela firewall, escolhe <b>Permitir</b>.',
+ outTitle:'Saída de som',outNote:'Onde o som da PS5 toca neste PC. Muda logo, sem parar.',outAuto:'Automático (recomendado)',outAutoK:'A saída de som normal do Windows',
+ bufTitle:'Atraso',bMin:'Mínimo',bNorm:'Normal',bStab:'Estável',bMax:'Máximo',bufNote:'Menos atraso é melhor para jogar. Se o som cortar, escolhe Estável. Muda logo, sem parar.',
+ langTitle:'Idioma',advTitle:'Avançado',portNote:'Porta UDP: só muda se a PS5 estiver configurada para outra porta.',report:'Guardar relatório',reportNote:'Para pedir ajuda: guarda e envia o ficheiro.',
+ detTitle:'Detalhes',dRx:'Pacotes recebidos',dDec:'Descodificados',dLost:'Perdidos / atrasados',dBad:'Inválidos',dErr:'Erros de descodificação',dReb:'Recomeços do buffer',dUnd:'Falhas da placa de som',dPc:'Este PC',dOut:'Saída de som',
+ h1t:'Não ouço nada',h2t:'O som corta ou falha',h3t:'Voltar aos auscultadores',h4t:'Sobre o atraso',
+ h1:'<li>A PS5 e este PC têm de estar <b>na mesma rede</b> (o mesmo router).</li><li>O cartão <b>PlayStation 5</b> tem de dizer <b>ligada</b>. Se disser <b>versão antiga</b>, instala a BossQuickDock 1.5.1 ou mais recente na PS5.</li><li>Tem de estar a tocar algum som na PS5: um jogo, um vídeo ou música.</li><li>Na primeira vez o Windows pode perguntar pela <b>firewall</b>: escolhe <b>Permitir</b>. Se carregaste em Cancelar, abre <b>Segurança do Windows → Firewall → Permitir uma app</b> e ativa o Python.</li><li>Confirma o volume do Windows e a <b>Saída de som</b> em Definições.</li>',
+ h2:'<li>Em <b>Definições → Atraso</b>, escolhe <b>Estável</b>.</li><li>Se puderes, liga o PC ou a PS5 por <b>cabo de rede</b>.</li><li>Downloads grandes na mesma rede podem causar falhas.</li><li>Fecha outras apps que estejam a usar muito a rede.</li>',
+ h3:'<li>Liga primeiro o auscultador ou a coluna Bluetooth.</li><li>Carrega em <b>Voltar ao Bluetooth</b>: a PS5 deixa de enviar para o PC e liga-se ao último dispositivo guardado na BossQuickDock.</li><li>Fechar esta janela pára o som no PC e na PS5, mas não liga o Bluetooth.</li>',
+ h4:'<li><b>Atraso no PC</b> mostra só a parte deste PC (buffer e placa de som). A rede e a PS5 juntam um pouco mais.</li><li><b>Mínimo</b> é melhor para jogar; <b>Estável</b> é melhor com Wi-Fi fraco.</li><li>Auscultadores com fio ou colunas ligadas ao PC têm menos atraso que Bluetooth no PC.</li>',
+ pNoIp:'Sem PS5',pWait:'A ligar à PS5…',pOk:'PS5 ligada',pGone:'PS5 sem resposta',pOld:'Versão antiga',pOff:'App fechada',
+ phIdle:'Parado',phConn:'A ligar',phWait:'À espera do som',phPlay:'A tocar',phStop:'A parar',phBt:'Bluetooth',phFind:'À procura',
+ tIdle:'Ouvir a PS5 neste PC',tConn:'A ligar à PS5…',tWait:'À espera do som da PS5',tPlay:'A tocar neste PC',tStop:'A parar…',tBt:'A ligar o Bluetooth…',tFind:'À procura da PS5…',
+ hNoIp:'Começa por carregar em Procurar PS5.',hIdle:'Carrega em Ouvir no PC.',hOther:'A PS5 está a enviar o som para outro PC: ',hRec:'Há uma gravação a decorrer na PS5. Termina-a primeiro no painel da BossQuickDock.',
+ hWait:'Põe a tocar um jogo ou um vídeo na PS5. Se continuar sem som, vê a Ajuda.',hPlay:'Para voltar aos auscultadores, carrega em Voltar ao Bluetooth.',hBusy:'Aguarda um momento…',hOld:'A BossQuickDock da PS5 não envia som para o PC. Instala a 1.5.1 ou mais recente.',
+ kState:'Estado',kVer:'BossQuickDock',kBt:'Bluetooth',kLive:'Som para o PC',vOn:'ligada',vGone:'sem resposta',vNone:'—',vOld:' (antiga: não envia para o PC)',vBtOff:'desligado',vHere:'a enviar para este PC',vOther:'a enviar para ',vRec:'gravação a decorrer',vStopped:'parado',
+ chOpus:'Opus · 48 kHz · estéreo',chBt:'Bluetooth: ',
+ m_need_ip:'Escreve o IP da PS5 ou carrega em Procurar PS5.',m_no_network:'Este PC não está ligado a uma rede.',m_found:'PS5 encontrada: ',m_not_found:'Não encontrei a PS5. Confirma que a BossQuickDock está aberta na PS5 e que estão na mesma rede.',
+ m_started:'O som da PS5 está a caminho deste PC.',m_already:'A PS5 já estava a enviar para este PC.',m_waiting_audio:'Ligado. Põe a tocar algum som na PS5.',m_stopped:'Parado.',
+ m_bt_connected:'Bluetooth ligado.',m_bt_requested:'Bluetooth pedido. Confirma que o auscultador ou a coluna está ligado.',
+ m_ps5_unreachable:'Não consigo falar com a PS5. Confirma o IP e que a BossQuickDock está aberta.',m_old_version:'A BossQuickDock na PS5 é antiga e não envia som para o PC. Instala a 1.5.1 ou mais recente.',
+ m_capture_busy:'Há uma gravação a decorrer na PS5. Termina-a primeiro no painel da BossQuickDock.',m_bt_disconnecting:'O Bluetooth da PS5 ainda está a desligar. Tenta outra vez.',
+ m_live_failed:'A PS5 não conseguiu começar a enviar o som. ',m_udp_busy:'Outro receiver está aberto neste PC. Fecha-o e tenta outra vez.',m_audio_failed:'Não consegui abrir a saída de som. Escolhe outra em Definições. ',
+ m_error:'Algo correu mal: ',m_saved:'Guardado.',m_bad_ip:'Esse IP não é válido.',m_bad_port:'A porta tem de ser um número entre 1024 e 65535.',m_busy:'Aguarda: ainda estou a tratar do pedido anterior.',m_report:'Relatório guardado na pasta Transferências.'},
+en:{appName:'PC Receiver',based:'based on HearBridge by X-F1REBALL-X',basedOn:'based on',tHome:'Home',tSet:'Settings',tHelp:'Help',
+ sLat:'PC delay',sRx:'Received',sLost:'Lost',sUp:'Playing for',btBack:'Back to Bluetooth',goOn:'Listen on PC',goOff:'Stop',
+ howTitle:'How to use',find:'Find PS5',save:'Save',ipPh:'PS5 IP, e.g. 192.168.1.73',
+ how1:'On the PS5, open <b>BossQuickDock</b> (version 1.5.1 or newer).',
+ how2:'Connect this PC to the <b>same network</b> as the PS5 (Wi-Fi or cable).',
+ how3:'Press <b>Find PS5</b>, or type the PS5 IP and press <b>Save</b>.',
+ how4:'Press <b>Listen on PC</b>. The PS5 sound now plays on this PC.',
+ how5:'To go back to your headphones, press <b>Back to Bluetooth</b>.',
+ howTip:'The first time, if Windows asks about the firewall, choose <b>Allow</b>.',
+ outTitle:'Sound output',outNote:'Where the PS5 sound plays on this PC. Changes right away.',outAuto:'Automatic (recommended)',outAutoK:'The normal Windows sound output',
+ bufTitle:'Delay',bMin:'Minimum',bNorm:'Normal',bStab:'Stable',bMax:'Maximum',bufNote:'Less delay is better for gaming. If the sound cuts out, choose Stable. Changes right away.',
+ langTitle:'Language',advTitle:'Advanced',portNote:'UDP port: only change it if the PS5 is set to another port.',report:'Save report',reportNote:'To ask for help: save it and send the file.',
+ detTitle:'Details',dRx:'Packets received',dDec:'Decoded',dLost:'Lost / late',dBad:'Invalid',dErr:'Decode errors',dReb:'Buffer restarts',dUnd:'Sound card underruns',dPc:'This PC',dOut:'Sound output',
+ h1t:'I hear nothing',h2t:'The sound cuts out',h3t:'Back to headphones',h4t:'About the delay',
+ h1:'<li>The PS5 and this PC must be <b>on the same network</b> (same router).</li><li>The <b>PlayStation 5</b> card must say <b>connected</b>. If it says <b>old version</b>, install BossQuickDock 1.5.1 or newer on the PS5.</li><li>Something must be playing on the PS5: a game, a video or music.</li><li>The first time, Windows may ask about the <b>firewall</b>: choose <b>Allow</b>. If you pressed Cancel, open <b>Windows Security → Firewall → Allow an app</b> and enable Python.</li><li>Check the Windows volume and the <b>Sound output</b> in Settings.</li>',
+ h2:'<li>In <b>Settings → Delay</b>, choose <b>Stable</b>.</li><li>If you can, connect the PC or the PS5 with a <b>network cable</b>.</li><li>Big downloads on the same network can cause dropouts.</li><li>Close other apps that use a lot of network.</li>',
+ h3:'<li>Turn on the Bluetooth headphones or speaker first.</li><li>Press <b>Back to Bluetooth</b>: the PS5 stops sending to the PC and connects to the last device saved in BossQuickDock.</li><li>Closing this window stops the sound on the PC and on the PS5, but does not connect Bluetooth.</li>',
+ h4:'<li><b>PC delay</b> shows only this PC\'s part (buffer and sound card). The network and the PS5 add a little more.</li><li><b>Minimum</b> is best for gaming; <b>Stable</b> is best on weak Wi-Fi.</li><li>Wired headphones or speakers on the PC have less delay than Bluetooth on the PC.</li>',
+ pNoIp:'No PS5',pWait:'Connecting to PS5…',pOk:'PS5 connected',pGone:'PS5 not answering',pOld:'Old version',pOff:'App closed',
+ phIdle:'Stopped',phConn:'Connecting',phWait:'Waiting for sound',phPlay:'Playing',phStop:'Stopping',phBt:'Bluetooth',phFind:'Searching',
+ tIdle:'Hear the PS5 on this PC',tConn:'Connecting to the PS5…',tWait:'Waiting for PS5 sound',tPlay:'Playing on this PC',tStop:'Stopping…',tBt:'Connecting Bluetooth…',tFind:'Looking for the PS5…',
+ hNoIp:'Start by pressing Find PS5.',hIdle:'Press Listen on PC.',hOther:'The PS5 is sending its sound to another PC: ',hRec:'A recording is running on the PS5. Finish it first in the BossQuickDock panel.',
+ hWait:'Play a game or a video on the PS5. If there is still no sound, see Help.',hPlay:'To go back to your headphones, press Back to Bluetooth.',hBusy:'One moment…',hOld:'The PS5\'s BossQuickDock does not send sound to the PC. Install 1.5.1 or newer.',
+ kState:'Status',kVer:'BossQuickDock',kBt:'Bluetooth',kLive:'Sound to PC',vOn:'connected',vGone:'not answering',vNone:'—',vOld:' (old: no PC sound)',vBtOff:'off',vHere:'sending to this PC',vOther:'sending to ',vRec:'recording',vStopped:'stopped',
+ chOpus:'Opus · 48 kHz · stereo',chBt:'Bluetooth: ',
+ m_need_ip:'Type the PS5 IP or press Find PS5.',m_no_network:'This PC is not connected to a network.',m_found:'PS5 found: ',m_not_found:'PS5 not found. Check that BossQuickDock is open on the PS5 and that both are on the same network.',
+ m_started:'The PS5 sound is on its way to this PC.',m_already:'The PS5 was already sending to this PC.',m_waiting_audio:'Connected. Play something on the PS5.',m_stopped:'Stopped.',
+ m_bt_connected:'Bluetooth connected.',m_bt_requested:'Bluetooth requested. Check that the headphones or speaker are on.',
+ m_ps5_unreachable:'Cannot reach the PS5. Check the IP and that BossQuickDock is open.',m_old_version:'BossQuickDock on the PS5 is old and does not send sound to the PC. Install 1.5.1 or newer.',
+ m_capture_busy:'A recording is running on the PS5. Finish it first in the BossQuickDock panel.',m_bt_disconnecting:'The PS5 Bluetooth is still disconnecting. Try again.',
+ m_live_failed:'The PS5 could not start sending the sound. ',m_udp_busy:'Another receiver is open on this PC. Close it and try again.',m_audio_failed:'Could not open the sound output. Choose another one in Settings. ',
+ m_error:'Something went wrong: ',m_saved:'Saved.',m_bad_ip:'That IP is not valid.',m_bad_port:'The port must be a number from 1024 to 65535.',m_busy:'Wait: still working on the previous request.',m_report:'Report saved in the Downloads folder.'}};
+function $(i){return document.getElementById(i)}
+function t(k){return (T[L]||T.pt)[k]||T.en[k]||k}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function api(m,p,body,cb){var x=new XMLHttpRequest();x.open(m,p);x.setRequestHeader('X-App-Token',TOKEN);if(body!=null)x.setRequestHeader('Content-Type','application/json');
+ x.onload=function(){var j=null;try{j=JSON.parse(x.responseText)}catch(e){}cb&&cb(x.status,j)};x.onerror=function(){cb&&cb(0,null)};x.send(body!=null?JSON.stringify(body):null)}
+var mt=0;function msg(s,kind){var m=$('msg');m.textContent=s||'';m.className='msg'+(kind=='bad'?'':kind?' '+kind:' info');clearTimeout(mt);if(s)mt=setTimeout(function(){m.textContent=''},kind=='bad'?8000:4500)}
+/* ---------- language ---------- */
+function setLang(l){if(l==L)return;L=l;document.documentElement.lang=l;
+ var a=document.querySelectorAll('[data-i]'),i;for(i=0;i<a.length;i++)a[i].textContent=t(a[i].getAttribute('data-i'));
+ a=document.querySelectorAll('[data-h]');for(i=0;i<a.length;i++)a[i].innerHTML=t(a[i].getAttribute('data-h'));
+ $('ip').placeholder=t('ipPh');OUT&&drawOut();clk();if(S)draw()}
+/* ---------- tabs ---------- */
+function view(id){var b=$('tabs').children,v=document.querySelectorAll('.view'),i;for(i=0;i<b.length;i++)b[i].classList.toggle('on',b[i].getAttribute('data-v')==id);
+ for(i=0;i<v.length;i++)v[i].classList.toggle('on',v[i].id==id);if(id=='vSet')loadOut()}
+(function(){var b=$('tabs').children;for(var i=0;i<b.length;i++)b[i].onclick=function(){view(this.getAttribute('data-v'))}})();
+/* ---------- drawing ---------- */
+function fmtUp(s){s=s|0;var m=s/60|0,h=m/60|0;return h?h+'h'+('0'+m%60).slice(-2):m+':'+('0'+s%60).slice(-2)}
+function kvRow(k,v,cls){return '<span class="k">'+esc(k)+'</span><span class="n '+(cls||'')+'">'+esc(v)+'</span>'}
+function draw(){var s=S.settings,c=S.console||{},st=S.stats||{},ph=S.phase;
+ setLang(s.lang||'en');                  /* English like the console page; Português in Settings */
+ var p=$('pill'),pc='wait',pt=t('pWait');
+ if(!s.ps5){pc='wait';pt=t('pNoIp')}else if(c.reachable===undefined){pc='wait';pt=t('pWait')}
+ else if(!c.reachable){pc='bad';pt=t('pGone')}else if(c.native===false){pc='bad';pt=t('pOld')}else{pc='ok';pt=t('pOk')+(c.version?' · '+c.version:'')}
+ p.className='pill '+pc;$('pillt').textContent=pt;
+ var map={idle:['off','phIdle','tIdle'],connecting:['wait','phConn','tConn'],waiting:['wait','phWait','tWait'],playing:['','phPlay','tPlay'],stopping:['wait','phStop','tStop'],bt:['wait','phBt','tBt'],searching:['wait','phFind','tFind']}[ph]||['off','phIdle','tIdle'];
+ $('hstate').className='state '+map[0];$('hstate').innerHTML=(map[0]=='wait'?'<span class="spin"></span>':'')+esc(t(map[1]));$('hdev').textContent=t(map[2]);
+ var h='';if(S.busy)h=t('hBusy');else if(ph=='playing')h=t('hPlay');else if(ph=='waiting')h=t('hWait');
+ else if(!s.ps5)h=t('hNoIp');else if(c.native===false)h=t('hOld');else if(c.recording)h=t('hRec');else if(c.live&&!c.live_here)h=t('hOther')+c.live_dest;else h=t('hIdle');
+ $('hint').textContent=h;
+ var ch='<span class="chip hi">'+esc(t('chOpus'))+'</span>';if(s.ps5)ch+='<span class="chip">PS5 '+esc(s.ps5)+'</span>';if(S.pc_ip)ch+='<span class="chip">PC '+esc(S.pc_ip)+'</span>';
+ if(c.state=='streaming'&&c.device)ch+='<span class="chip">'+esc(t('chBt')+c.device)+'</span>';$('hchips').innerHTML=ch;
+ $('sLat').textContent=S.listening?'~'+st.pc_ms+' ms':'—';$('sRx').textContent=S.listening?st.received:'—';$('sLost').textContent=S.listening?st.lost:'—';$('sUp').textContent=ph=='playing'?fmtUp(st.uptime_s):'—';
+ var go=$('go');go.textContent=S.listening?t('goOff'):t('goOn');go.className='b xl '+(S.listening?'r':'p');go.disabled=!!S.busy;
+ $('bt').disabled=!!S.busy||!s.ps5||c.reachable===false||c.native===false;$('find').disabled=!!S.busy;$('ipSave').disabled=!!S.busy;
+ var ip=$('ip');if(document.activeElement!=ip&&!ip.dataset.dirty)ip.value=s.ps5||'';
+ var port=$('port');if(document.activeElement!=port)port.value=s.port;
+ var kv=kvRow(t('kState'),!s.ps5?t('vNone'):c.reachable===undefined?'…':c.reachable?t('vOn'):t('vGone'),c.reachable?'good':c.reachable===false?'bad':'');
+ if(c.reachable){kv+=kvRow(t('kVer'),(c.version||'?')+(c.native===false?t('vOld'):''),c.native===false?'bad':'');
+  kv+=kvRow(t('kBt'),c.state=='streaming'?(c.device||'✓'):t('vBtOff'));
+  kv+=kvRow(t('kLive'),c.live_here?t('vHere'):c.live?t('vOther')+c.live_dest:c.recording?t('vRec'):t('vStopped'),c.live_here?'good':c.live||c.recording?'warn':'')}
+ $('ps5kv').innerHTML=kv;
+ var b=$('buf').children;for(var i=0;i<b.length;i++)b[i].classList.toggle('on',+b[i].getAttribute('data-b')==s.buffer_ms);
+ b=$('lang').children;for(i=0;i<b.length;i++)b[i].classList.toggle('on',b[i].getAttribute('data-l')==L);
+ $('det').innerHTML=kvRow(t('dPc'),S.pc_ip||'—')+kvRow(t('dRx'),st.received)+kvRow(t('dDec'),st.decoded)+kvRow(t('dLost'),st.lost)+kvRow(t('dBad'),st.invalid)+kvRow(t('dErr'),st.decode_errors)+kvRow(t('dReb'),st.rebuffers)+kvRow(t('dUnd'),st.underflows);
+ $('fpc').textContent=S.pc_ip?t('dPc')+': '+S.pc_ip:'';
+ if(OUT&&OUT.sel!=s.output)drawOut();
+ var m=S.msg;if(LASTMSG<0)LASTMSG=m.n;               /* first read: old messages stay hidden */
+ else if(m.n!=LASTMSG){LASTMSG=m.n;var d=(m.code=='found'||m.code=='not_found'||m.code=='error'||m.code=='live_failed'||m.code=='audio_failed')?m.detail:'';if(m.code)msg(t('m_'+m.code)+(d||''),m.kind)}}
+/* ---------- outputs ---------- */
+function loadOut(){api('GET','/api/outputs',null,function(st,j){if(st==200&&j){OUT={list:j.outputs||[]};drawOut()}})}
+function drawOut(){if(!S)return;var sel=S.settings.output,h='<button class="it'+(sel=='auto'?' on':'')+'" data-o="auto"><span class="dot"></span><span><b>'+esc(t('outAuto'))+'</b><span class="k">'+esc(t('outAutoK'))+'</span></span></button>';
+ for(var i=0;i<OUT.list.length;i++){var o=OUT.list[i];h+='<button class="it'+(sel==o.id?' on':'')+'" data-o="'+esc(o.id)+'"><span class="dot"></span><span><b>'+esc(o.name)+'</b></span></button>'}
+ $('outL').innerHTML=h;OUT.sel=sel;var b=$('outL').children;for(i=0;i<b.length;i++)b[i].onclick=function(){setS({output:this.getAttribute('data-o')})}}
+/* ---------- actions ---------- */
+function setS(o,ok){api('POST','/api/settings',o,function(st,j){if(st==200&&j){S&&(S.settings=j.settings,draw());ok&&msg(t('m_saved'),'good')}})}
+function act(name,body){api('POST','/api/action/'+name,body||{},function(st){if(st==409)msg(t('m_busy'),'bad');poll(1)})}
+function validIp(v){return /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(v)}
+$('go').onclick=function(){if(!S)return;if(S.listening){act('stop');return}var v=$('ip').value.trim();
+ if(v&&!validIp(v)){msg(t('m_bad_ip'),'bad');return}$('ip').dataset.dirty='';act('listen',v?{ps5:v}:{})};
+$('bt').onclick=function(){act('bluetooth')};
+$('find').onclick=function(){$('ip').dataset.dirty='';act('find')};
+$('ip').oninput=function(){this.dataset.dirty='1'};
+$('ipSave').onclick=function(){var v=$('ip').value.trim();if(!validIp(v)){msg(t('m_bad_ip'),'bad');return}$('ip').dataset.dirty='';setS({ps5:v},1)};
+$('ip').onkeydown=function(e){if(e.key=='Enter')$('ipSave').onclick()};
+$('portSave').onclick=function(){var v=+$('port').value;if(!(v>=1024&&v<=65535)){msg(t('m_bad_port'),'bad');return}setS({port:v},1)};
+(function(){var b=$('buf').children,i;for(i=0;i<b.length;i++)b[i].onclick=function(){setS({buffer_ms:+this.getAttribute('data-b')})};
+ b=$('lang').children;for(i=0;i<b.length;i++)b[i].onclick=function(){setS({lang:this.getAttribute('data-l')})}})();
+$('report').onclick=function(){api('GET','/api/report',null,function(st,j){if(st!=200)return;var a=document.createElement('a');
+ a.href=URL.createObjectURL(new Blob([JSON.stringify(j,null,2)],{type:'application/json'}));a.download='BossQuickDock-Receiver-report.json';document.body.appendChild(a);a.click();a.remove();msg(t('m_report'),'good')})};
+/* ---------- live waveform (same drawing as the console page) ---------- */
+(function(){var cv=$('wave'),cx=cv.getContext('2d'),ph=0,lv=0,last=0,gr=null,gw=0;
+ function fr(){var now=Date.now(),dt=last?Math.min(100,now-last):16;last=now;var w=cv.clientWidth|0,h=cv.clientHeight|0;
+  if(w<2||h<2){requestAnimationFrame(fr);return}
+  if(cv.width!=w||cv.height!=h){cv.width=w;cv.height=h;gr=null}
+  if(!gr||gw!=w){gw=w;gr=cx.createLinearGradient(0,0,w,0);gr.addColorStop(0,'rgba(47,123,255,0)');gr.addColorStop(.2,'#2f7bff');gr.addColorStop(.8,'#9b5cff');gr.addColorStop(1,'rgba(155,92,255,0)')}
+  cx.clearRect(0,0,w,h);
+  var on=S&&S.phase=='playing',tgt=on?Math.min(1,(+S.level||0)*2.4):0,k=dt/16.7;lv+=(tgt-lv)*Math.min(1,.08*k);ph+=(on?.09:.02)*k;
+  var step=Math.max(4,w/120|0);cx.strokeStyle=gr;cx.lineJoin='round';
+  for(var l=0;l<3;l++){var amp=(.08+lv*.85)*h*.45*(1-l*.28);cx.beginPath();
+   for(var x=0;x<=w;x+=step){var tt=x/w,env=Math.sin(Math.PI*tt),y=h/2+Math.sin(tt*22+ph*(1+l*.4)+l)*Math.sin(tt*7-ph*.7)*amp*env;x?cx.lineTo(x,y):cx.moveTo(x,y)}
+   if(l==0){cx.globalAlpha=.18;cx.lineWidth=9;cx.stroke()}
+   cx.globalAlpha=1-l*.32;cx.lineWidth=2.4-l*.6;cx.stroke()}
+  cx.globalAlpha=1;requestAnimationFrame(fr)}
+ requestAnimationFrame(fr)})();
+/* ---------- clock + polling ---------- */
+function clk(){var d=new Date(),h=d.getHours(),m=d.getMinutes();$('clk').textContent=(h<10?'0':'')+h+':'+(m<10?'0':'')+m;
+ try{$('clkd').textContent=d.toLocaleDateString(L=='pt'?'pt-PT':'en-GB',{weekday:'short',day:'numeric',month:'short'})}catch(e){}}
+setInterval(clk,15000);
+var pt=0;function poll(now){clearTimeout(pt);api('GET','/api/state',null,function(st,j){
+ if(st==200&&j){S=j;FAILS=0;draw()}else if(++FAILS>=3){$('pill').className='pill bad';$('pillt').textContent=t('pOff')}
+ pt=setTimeout(poll,document.hidden?2000:300)})}
+window.addEventListener('pagehide',function(){try{navigator.sendBeacon('/api/bye',JSON.stringify({token:TOKEN}))}catch(e){}});
+setLang('en');poll();
+</script>
+</body>
+</html>

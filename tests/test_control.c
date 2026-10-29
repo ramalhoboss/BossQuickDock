@@ -102,6 +102,11 @@ int main(int argc, char **argv)
         const char *b = strstr(out, "\r\n\r\n");
         if (f && b) { fwrite(b + 4, 1, (size_t)(out + n - (b + 4)), f); fclose(f); }
     }
+    c.capture.state=3;c.capture.valid=1234567890123ULL;c.capture.recoveries=2;c.capture.overrun=3;c.capture.age_ms=5001;
+    get(&c, "/api/status");
+    CHECK(strstr(out, "\"capture\":{\"state\":3,\"age_ms\":5001") && strstr(out, "\"valid\":1234567890123") && strstr(out,"\"recoveries\":2"), "status: native capture snapshot and 64-bit counters");
+    { hb_ctl cleared=c;ctl_clear_link(&cleared,0);
+    CHECK(cleared.capture.state==0 && cleared.capture.valid==0, "capture telemetry cleared on link reset"); }
     post(&c, "/api/volume?pct=250");
     CHECK(c.gain_pct == 250 && c.gain_dirty, "volume 250% set + marked for saving");
     post(&c, "/api/volume?pct=999");
@@ -827,6 +832,30 @@ int main(int argc, char **argv)
     get(&c, "/font.woff2");
     CHECK(!strncmp(out, "HTTP/1.1 200", 12) && strstr(out, "font/woff2") && strstr(out, "max-age=604800") &&
           strstr(out, "\r\n\r\nwOF2"), "font: /font.woff2 served from the payload, cached");
+
+    {extern int native_test_busy,native_test_started,native_test_cancelled;
+     get(&c,"/api/native");CHECK(!strncmp(out,"HTTP/1.1 200",12)&&strstr(out,"AAC"),"native: read-only status");
+     get(&c,"/api/native/start?format=1&seconds=12");CHECK(!strncmp(out,"HTTP/1.1 405",12)&&!native_test_started,"native: GET cannot start recording");
+     {const char *r="POST /api/native/start?format=1&seconds=12 HTTP/1.1\r\n\r\n";http_handle(&c,r,(int)strlen(r),out,sizeof out);}
+     CHECK(!strncmp(out,"HTTP/1.1 403",12)&&!native_test_started,"native: start requires token");
+     post(&c,"/api/native/start?format=3&seconds=12");CHECK(!strncmp(out,"HTTP/1.1 400",12),"native: unsupported codec rejected");
+     strcpy(c.state,"streaming");c.paused=0;
+     post(&c,"/api/native/start?format=1&seconds=12");CHECK(!strncmp(out,"HTTP/1.1 409",12)&&!native_test_started,"native: Bluetooth streaming blocks recording");
+     strcpy(c.state,"disconnected");c.paused=1;
+     post(&c,"/api/native/start?format=2&seconds=30");CHECK(!strncmp(out,"HTTP/1.1 200",12)&&native_test_started==230,"native: valid paused request starts Opus recording");
+     post(&c,"/api/native/start?format=1&seconds=12");CHECK(!strncmp(out,"HTTP/1.1 409",12),"native: duplicate start rejected");
+     c.req_connect=0;post(&c,"/api/connect");CHECK(!strncmp(out,"HTTP/1.1 409",12)&&!c.req_connect,"native: Bluetooth connect blocked during recording");
+     post(&c,"/api/native/stop");CHECK(!strncmp(out,"HTTP/1.1 200",12)&&native_test_cancelled==1,"native: authenticated cancellation");
+     native_test_busy=0;post(&c,"/api/connect");CHECK(!strncmp(out,"HTTP/1.1 200",12)&&c.req_connect,"native: Bluetooth connect resumes after recording");
+    }
+
+    {extern int native_test_busy,native_test_started;
+     native_test_busy=0;c.paused=1;strcpy(c.state,"disconnected");
+     get(&c,"/api/native/live?ip=192.168.1.134&port=18098");CHECK(!strncmp(out,"HTTP/1.1 405",12),"live: GET cannot start transmission");
+     post(&c,"/api/native/live?ip=192.168.1.134&port=18098");CHECK(!strncmp(out,"HTTP/1.1 200",12)&&native_test_busy,"live: authenticated request starts sender");
+     post(&c,"/api/connect");CHECK(!strncmp(out,"HTTP/1.1 409",12),"live: Bluetooth connection blocked while sending");
+     native_test_busy=0;post(&c,"/api/native/live?ip=192.168.1.134&port=80");CHECK(!strncmp(out,"HTTP/1.1 400",12),"live: invalid destination port rejected");
+    }
     printf("%s (%d failures)\n", fails ? "FAILED" : "ALL OK", fails);
     return fails ? 1 : 0;
 }

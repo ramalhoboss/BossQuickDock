@@ -1,0 +1,6 @@
+#include "opus_wire.h"
+#include <stdio.h>
+#include <assert.h>
+#include <string.h>
+static unsigned u32(unsigned char *p){return p[0]|(unsigned)p[1]<<8|(unsigned)p[2]<<16|(unsigned)p[3]<<24;}
+int main(int argc,char **argv){unsigned char ip[4],h[32],r[32],payload[8192],out[1248];assert(opus_wire_ipv4("192.168.1.134",ip)&&ip[3]==134);assert(!opus_wire_ipv4("256.1.1.1",ip)&&!opus_wire_ipv4("192.168.1.255",ip)&&!opus_wire_ipv4("1.2.3.4x",ip)&&!opus_wire_ipv4("224.1.1.1",ip));assert(opus_wire_packet(out,sizeof out,1,0,0,0,payload,1201)<0);assert(argc==3);FILE *in=fopen(argv[1],"rb"),*f=fopen(argv[2],"wb");assert(in&&f&&fread(h,1,32,in)==32);unsigned seq=0;while(fread(r,1,32,in)==32){unsigned n=u32(r+24);assert(n<=8192&&fread(payload,1,n,in)==n);int len=opus_wire_packet(out,sizeof out,0x1122334455667788ULL,seq,100000+(uint64_t)seq*2400,(uint64_t)seq*10000,payload,n);assert(len>0);unsigned char sz[2]={(unsigned char)len,(unsigned char)(len>>8)};assert(fwrite(sz,1,2,f)==2&&fwrite(out,1,len,f)==(size_t)len);seq++;}int len=opus_wire_packet(out,sizeof out,0x1122334455667788ULL,seq,0,0,NULL,0);assert(len==48);unsigned char sz[2]={48,0};fwrite(sz,1,2,f);fwrite(out,1,48,f);fclose(in);fclose(f);printf("PASS wire protocol: %u real Opus packets + end marker\n",seq);return 0;}

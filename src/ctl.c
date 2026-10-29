@@ -121,6 +121,7 @@ void ctl_clear_link(hb_ctl *c, int drop_device)
     c->link_score = -1;
     c->drops_min = 0;
     c->pkts = c->frames = c->empty_reads = c->dropped = 0;
+    memset(&c->capture, 0, sizeof c->capture);
     c->peak_milli = c->out_peak_milli = 0;
     c->codec[0] = 0;
     c->codec_avail = 0;

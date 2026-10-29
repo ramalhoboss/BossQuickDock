@@ -58,6 +58,7 @@ typedef struct {
     int remote_closed;      /* sink sent CLOSE / ABORT while streaming */
     void *dump;             /* FILE* for the media debug dump, or NULL */
     int dump_left;
+    int diag_query;          /* startup diagnostic rejects fragmented replies */
     int quick;              /* teardown: single short command try */
     int peer_opened;          /* signalling channel opened by the headset */
     int remote_cfg;           /* the headset configured our SEP itself (SET_CONFIGURATION) */

@@ -4,6 +4,7 @@
 #define HEARBRIDGE_CTL_H
 
 #include <pthread.h>
+#include "avcap2.h"
 
 #define HB_GAIN_DEFAULT_PCT 250   /* software base gain, middle of the slider */
 #define HB_GAIN_MAX_PCT     500
@@ -50,6 +51,7 @@ typedef struct {
     int hs_volume;         /* 0..127, -1 unknown */
     int avrcp;             /* btlink_avrcp_state() bits */
     long pkts, frames, empty_reads, uptime_s;
+    avcap2_stats capture; /* owner snapshot; HTTP never touches native session */
     int peak_milli;        /* capture peak x1000 (last second) */
     int out_peak_milli;    /* after gain/limiter */
     char codec[24];        /* e.g. "SBC" / "SBC-XQ" (empty = none) */

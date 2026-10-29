@@ -168,6 +168,7 @@ int      btlink_tx_queue_max(void);
  * (audio ms per media packet) and raw counters for runtime measurement. */
 int      btlink_media_cap(const btlink *l);
 void     btlink_set_media_cap(btlink *l, int n);
+void     btlink_set_media_direct(btlink *l, int on);
 void     btlink_set_media_pace(btlink *l, long ms_per_packet);
 void     btlink_tx_counters(const btlink *l, unsigned long *sent, unsigned long *credits,
                             int *limit);

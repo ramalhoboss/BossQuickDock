@@ -1,4 +1,5 @@
 #include "btlink.h"
+#include "direct_sbc.h"
 #include "blocklist.h"
 #include "acl_track.h"
 #include "acl_pool.h"
@@ -104,6 +105,7 @@ typedef struct {
 typedef struct {
     uint16_t len;
     unsigned char media;      /* A2DP media: may be dropped when late */
+    long queued_ms;
     long due;                 /* media: earliest send time (pacing) */
     unsigned char d[HCI_PKT_MAX];
 } txq_item;
@@ -141,6 +143,7 @@ struct btlink {
     txq_item txq[TXQ_MAX];
     int txq_head, txq_n, txq_media;
     int tx_is_media;          /* set around a media send */
+    int media_direct;
     int media_cap;            /* media queue depth for this link (tuned) */
     long media_dur_ms;        /* audio length of the next media packet */
     long media_clock;         /* pacing clock: due time of the next media packet */
@@ -247,9 +250,14 @@ static void tx_flush(btlink *l)
 {
     long now = now_ms();
     pool_fallback(&l->pool, now);
-    while (l->txq_n > 0 && l->pool.outstanding < l->pool.limit) {
+    while (l->txq_n > 0) {
         txq_item *it = &l->txq[l->txq_head];
-        if (it->media && it->due > now && l->txq_media <= PACE_TARGET_PKTS) break;   /* paced: not yet */
+        if(l->media_direct && it->media && bqd_sbc_expired(it->queued_ms,now)){
+            l->txq_media--;l->txq_head=(l->txq_head+1)%TXQ_MAX;l->txq_n--;l->pool.dropped++;l->pool.media_dropped++;continue;
+        }
+        if(l->pool.outstanding>=l->pool.limit)break;
+        if(l->media_direct && it->media && l->pool.outstanding>=BQD_SBC_MAX_OUTSTANDING)break;
+        if (!l->media_direct && it->media && it->due > now && l->txq_media <= PACE_TARGET_PKTS) break;   /* paced: not yet */
         if (!tx_write(l, it->d, it->len)) break;
         if (it->media) l->txq_media--;
         l->txq_head = (l->txq_head + 1) % TXQ_MAX;
@@ -337,13 +345,13 @@ static int l2_send_raw(btlink *l, unsigned cid, const unsigned char *d, int len)
     tx_flush(l);
     {
         long due = 0, now = now_ms();
-        if (l->tx_is_media) {
+        if (l->tx_is_media && !l->media_direct) {
             /* Pace media on a monotonic clock, one packet per its audio
              * length, so credits are not taken in bursts. A backlog (clock
              * in the past) is sent as fast as credits allow. */
             due = acl_pace_due(&l->media_clock, l->media_dur_ms, now, l->txq_media);
         }
-        if (l->txq_n == 0 && l->pool.outstanding < l->pool.limit && due <= now)
+        if (l->txq_n == 0 && l->pool.outstanding < l->pool.limit && (!l->tx_is_media || !l->media_direct || l->pool.outstanding<BQD_SBC_MAX_OUTSTANDING) && due <= now)
             return tx_write(l, pkt, frame + 4);
         l->cur_due = due;
     }
@@ -357,6 +365,7 @@ static int l2_send_raw(btlink *l, unsigned cid, const unsigned char *d, int len)
         txq_item *it = &l->txq[(l->txq_head + l->txq_n) % TXQ_MAX];
         it->media = (unsigned char)(l->tx_is_media != 0);
         it->due = it->media ? l->cur_due : 0;
+        it->queued_ms=now_ms();
         if (it->media) l->txq_media++;
         it->len = (uint16_t)(frame + 4);
         memcpy(it->d, pkt, (size_t)(frame + 4));
@@ -2577,14 +2586,21 @@ int btlink_media_cap(const btlink *l)
 void btlink_set_media_cap(btlink *l, int n)
 {
     if (!l) return;
+    if(l->media_direct){l->media_cap=BQD_SBC_QUEUE_PKTS;return;}
     if (n < HB_QUEUE_FLOOR_PKTS) n = HB_QUEUE_FLOOR_PKTS;
     if (n > MEDIA_Q_MAX) n = MEDIA_Q_MAX;
     l->media_cap = n;
 }
 
+void btlink_set_media_direct(btlink *l,int on)
+{
+ if(!l)return;
+ l->media_direct=on!=0;l->media_clock=0;
+ if(on){l->media_dur_ms=0;l->media_cap=BQD_SBC_QUEUE_PKTS;while(l->txq_media>BQD_SBC_QUEUE_PKTS)if(!txq_drop_oldest_media(l))break;}
+}
 void btlink_set_media_pace(btlink *l, long ms_per_packet)
 {
-    if (l) l->media_dur_ms = ms_per_packet;
+    if (l) l->media_dur_ms = l->media_direct?0:ms_per_packet;
 }
 
 void btlink_tx_counters(const btlink *l, unsigned long *sent, unsigned long *credits,

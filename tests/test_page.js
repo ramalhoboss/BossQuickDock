@@ -5,7 +5,8 @@
 // the headset's codec_avail bits (aptX included).
 // Usage: node tests/test_page.js src/web/index.html
 const fs = require('fs');
-const html = fs.readFileSync(process.argv[2], 'utf8');
+let html = fs.readFileSync(process.argv[2], 'utf8');
+if(html.includes('/*MONITOR*/')) { const path=require('path'),dir=path.dirname(process.argv[2]);html=html.replace('/*MONITOR*/',fs.readFileSync(path.join(dir,'monitor.js'),'utf8')).replace('/*STUDIO*/',fs.readFileSync(path.join(dir,'studio.js'),'utf8')); }
 const js = html.match(/<script>([\s\S]*)<\/script>/)[1];
 const TOKEN = 'deadbeefdeadbeefdeadbeefdeadbeef';
 
@@ -22,6 +23,8 @@ const codecBtns = [...html.matchAll(/<button class="b" data-m="(\d)">([^<]*)<\/b
   const b = mkEl('codec' + m[1]); b.attrs['data-m'] = m[1]; b.label = m[2]; return b;
 });
 
+const textBtns=['standard','large','tv'].map(x=>{const b=mkEl('text-'+x);b.attrs['data-text-size']=x;return b;});
+const STORE={};
 let STATUS = {};
 const calls = [];
 let reply = () => [200, STATUS];
@@ -37,10 +40,10 @@ class XHR {
 }
 const timers = [];
 const ctx = {
-  document: { getElementById: el, querySelectorAll: q => (q === '#codec .b' ? codecBtns : []), querySelector: () => null,
+  document: { getElementById: el, querySelectorAll: q => (q === '#codec .b' ? codecBtns : q === '[data-text-size]' ? textBtns : []), querySelector: () => null,
     addEventListener() {}, documentElement: { style: { setProperty() {} } }, createElement: () => mkEl('a'), body: mkEl('body') },
   window: { addEventListener() {}, requestAnimationFrame() {} },
-  XMLHttpRequest: XHR, localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
+  XMLHttpRequest: XHR, localStorage: { getItem: k => STORE[k]||null, setItem(k,v) {STORE[k]=v;} }, confirm: () => true,
   setTimeout(fn) { timers.push(fn); return timers.length; }, setInterval() {}, clearTimeout() {},
   Date, JSON, Math, String, parseInt, URL: {}, Blob: function () {}, FileReader: function () {},
 };
@@ -53,7 +56,7 @@ function status(extra) {
     codec: 'SBC', codec_pref: 0, codec_avail: 2, eq: { on: 0, db: [0, 0, 0, 0, 0] }, events: [], stream_s: 5, uptime_s: 9 }, extra);
 }
 STATUS = status();
-new Function(...Object.keys(ctx), js)(...Object.values(ctx));
+const nativeRuntime=new Function(...Object.keys(ctx), js+';return {set:function(s,n){S=s;okT=Date.now();NATIVE=n;},draw:nativeDraw};')(...Object.values(ctx));
 
 let fails = 0;
 const check = (c, m) => { console.log((c ? 'ok   ' : 'FAIL ') + m); if (!c) fails++; };
@@ -122,4 +125,21 @@ check(calls.some(c => c.m === 'GET' && c.p === '/api/status'), 'page: status pol
 
 check(!/https?:\/\/(?!127\.0\.0\.1)[^"'\s]*\.(js|css|woff2?)/.test(html), 'page: no scripts, styles or fonts from the internet');
 console.log(fails ? `FAILED (${fails})` : 'ALL OK (0 failures)');
-process.exit(fails ? 1 : 0);
+const postsBefore=calls.filter(c=>c.m==='POST').length;
+textBtns[2].onclick();
+check(ctx.document.documentElement.style.fontSize==='24px' && ctx.document.documentElement.className==='bqd-text-tv','TV text mode applies readable font and layout');
+check(STORE.bqdTextSize==='tv','text size is saved in browser storage');
+check(calls.filter(c=>c.m==='POST').length===postsBefore,'text size changes do not modify console audio settings');
+textBtns[0].onclick();
+check(ctx.document.documentElement.style.fontSize==='' && STORE.bqdTextSize==='standard','Standard restores responsive text sizing');
+
+
+nativeRuntime.set({connected:1,paused:0},{active:false,ready:false,codec:'AAC'});nativeRuntime.draw();check(el('nativeStart').disabled,'native: cannot record over Bluetooth playback');
+nativeRuntime.set({connected:0,paused:1},{active:false,ready:false,codec:'AAC'});nativeRuntime.draw();check(!el('nativeStart').disabled,'native: disconnected and paused enables recording');
+nativeRuntime.set({connected:0,paused:1},{active:true,codec:'Opus',duration_s:12,elapsed_ms:6000,packets:600});nativeRuntime.draw();check(el('nativeStart').disabled&&!el('nativeStop').disabled&&el('nativeReconnect').disabled,'native: recording locks conflicting controls');check(el('nativeProgress').value===50,'native: progress reflects recorded time');
+nativeRuntime.set({connected:0,paused:1},{active:false,ready:true,codec:'Opus'});nativeRuntime.draw();check(!el('nativeDownloads').hidden&&el('nativeFile').textContent==='Download Opus','native: completed export download is visible');
+
+nativeRuntime.set({connected:0,paused:1},{active:true,mode:'live',codec:'Opus',duration_s:7200,destination:'192.168.1.134',port:18098,sent_packets:100,send_errors:2});nativeRuntime.draw();check(el('liveStart').disabled&&!el('liveStop').disabled&&el('nativeStart').disabled,'live: conflicting start buttons disabled');check(el('nativeProgress').hidden&&el('liveState').textContent.includes('100 packets sent'),'live: sender statistics and mode displayed');
+
+nativeRuntime.set({connected:0,paused:1},{active:false,mode:'recording',codec:'Opus'});nativeRuntime.draw();el('liveIP').value='192.168.1.134';el('livePort').value='18098';calls.length=0;el('liveStart').onclick();check(calls[0]&&calls[0].m==='POST'&&calls[0].p==='/api/native/live?ip=192.168.1.134&port=18098'&&calls[0].h['X-HB-Token']===TOKEN,'live: destination sent through authenticated POST');
+if(fails)process.exitCode=1;

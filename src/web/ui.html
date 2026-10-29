@@ -5,7 +5,7 @@
 <meta name="color-scheme" content="dark">
 <title>BossQuickDock</title>
 <!-- BossQuickDock - Developed by RamalhoBoss.
-     Based on HearBridge PS5 de X-F1REBALL-X. GPL-3.0-or-later. -->
+     Based on HearBridge PS5 by X-F1REBALL-X. GPL-3.0-or-later. -->
 <style>
 @font-face{font-family:"BQ Inter";src:url(/font.woff2) format("woff2");font-weight:300 900;font-display:swap}
 :root{--bg:#020306;--glass:rgba(13,17,28,.78);--glass2:rgba(22,29,46,.86);--line:rgba(110,150,255,.16);--line2:rgba(120,160,255,.32);
@@ -178,6 +178,38 @@ input.tx:focus{border-color:var(--blue2);box-shadow:0 0 1rem rgba(47,123,255,.5)
  .foot .cr{margin:0;text-align:center;width:100%}
 }
 @media(prefers-reduced-motion:reduce){.amb i,.view{animation:none}}
+/* Studio diagnostics */
+#vDiag{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:1.1rem;align-content:start;overflow-y:auto}
+#vDiag .card{min-width:0}.studio-wide{grid-column:1/-1}.studio-note{line-height:1.6;margin:.7rem 0;color:var(--ink2);font-size:.88rem}
+.studio-graphs{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}.studio-graphs canvas{display:block;width:100%;height:110px;margin-top:.5rem;background:rgba(0,0,0,.18);border-radius:.6rem}
+.studio-ver{font-size:.75rem;color:var(--cyan);white-space:nowrap}#diagRaw{white-space:pre-wrap;overflow:auto;max-height:20rem;font:12px/1.5 monospace;color:var(--ink2);margin-top:1rem;word-break:break-word}
+#exportText{width:100%;height:9rem;background:var(--bg);color:var(--ink2);border:1px solid var(--line2);margin-top:.5rem}#testLen{background:var(--glass2);color:var(--ink);border:1px solid var(--line2);border-radius:.5rem;padding:.5rem}#testState{color:var(--cyan);margin:.8rem 0}
+@media(max-width:759px){#vDiag{grid-template-columns:minmax(0,1fr)}.studio-graphs{grid-template-columns:1fr}.top{gap:.6rem}.studio-wide{grid-column:auto}.tab{font-size:.78rem;padding:0 .3rem}}
+/* Readability: panels scroll instead of compressing and clipping their cards. */
+html{font-size:17px}
+@media(min-width:1180px) and (min-height:600px){html{font-size:clamp(17px,1vw,22px)}}
+:root{--mute:#a1aec6}
+.top{flex-wrap:wrap;gap:.8rem 1.1rem;flex-shrink:0}.tabs{flex-wrap:wrap}
+.view{overflow-y:auto;padding:.15rem .35rem .8rem .15rem;scroll-padding:1rem}
+#vSys,#vDev,#vGames{align-items:start;align-content:start;grid-auto-rows:max-content;grid-template-rows:none}
+#vSys .card,#vDev .card,#vGames .card,#vDiag .card{min-height:min-content;flex-shrink:0}
+#vSys .card>*{flex-shrink:0}.sl input{min-width:0;min-height:2.5rem;margin:.3rem 0}
+#vHome{grid-template-rows:auto auto;align-content:start}#vHome .hero{min-height:27rem}
+.ct{font-size:.9rem;letter-spacing:.14em;flex-wrap:wrap}
+.k,.b.sm,.studio-note,.logl,.it .k{font-size:1rem;line-height:1.55}
+.sl label,.tile small,.lkeys{font-size:.95rem}.eqb small,.st .k,.chip,.state,.studio-ver{font-size:.85rem}
+.kv{grid-template-columns:minmax(0,1fr) minmax(0,1fr);font-size:1rem}.kv span{overflow-wrap:anywhere}.kv .n{font-variant-numeric:tabular-nums}
+#diagRaw{font-size:14px}.foot{flex-wrap:wrap}.foot .cr{font-size:.85rem}
+#recentKV{margin-top:.8rem}.read-size .on{border-color:var(--cyan);background:rgba(56,214,255,.15)}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--cyan);outline-offset:3px}
+@media(max-width:1000px){#vSys,#vDev,#vGames,#vDiag,#vHome{grid-template-columns:minmax(0,1fr)}.hero{grid-row:auto;grid-column:1/-1}.studio-wide{grid-column:1/-1}.credit{display:none}}
+@media(max-width:759px){.tab{font-size:.95rem}.top .brand{flex:1 1 100%}.ct{letter-spacing:.08em}.card{padding:1rem}.foot .cr{text-align:start}}
+html.bqd-text-tv .credit,html.bqd-text-tv .clock,html.bqd-text-tv .foot .pk{display:none}
+html.bqd-text-tv .top{gap:.4rem .7rem}html.bqd-text-tv .brand img{width:3rem;height:2.5rem}html.bqd-text-tv .wm b{font-size:1.5rem}
+html.bqd-text-tv .tabs{order:5;width:100%;margin:0;justify-content:space-between}html.bqd-text-tv .tab{padding:0 .5rem}
+html.bqd-text-tv .foot{padding-top:.4rem;margin-top:.4rem}html.bqd-text-tv .foot .cr{font-size:.75rem}
+#vRecord{grid-template-columns:minmax(0,1fr);grid-auto-rows:max-content;gap:1.1rem;align-content:start;overflow-y:auto;padding-bottom:1rem}#vRecord>.card{min-height:max-content;overflow:visible;gap:.6rem}#nativeProgress{width:100%;height:1rem;margin:.6rem 0}#vRecord select{font:inherit;color:var(--ink);background:#151e32;border:1px solid var(--line2);padding:.65rem;border-radius:.6rem;max-width:100%}#vRecord a.b{text-decoration:none;display:inline-block}#vRecord .mrow{display:flex;align-items:center;flex-wrap:wrap;gap:.7rem;margin:.2rem 0}#nativeKV .n{overflow-wrap:anywhere}.tabs{overflow-x:auto;flex-shrink:0}
+#vRecord .live-box{padding:1rem;border:1px solid var(--line2);border-radius:1rem;margin:.4rem 0}#vRecord input{font:inherit;background:#151e32;border:1px solid var(--line2);border-radius:.5rem;padding:.65rem;width:12rem;max-width:100%}#livePort{width:7rem!important}#vRecord h3{font-size:1.15rem}
 </style></head>
 <body>
 <div class="amb" aria-hidden="true"><i class="o1"></i><i class="o2"></i><i class="o3"></i></div>
@@ -186,13 +218,38 @@ input.tx:focus{border-color:var(--blue2);box-shadow:0 0 1rem rgba(47,123,255,.5)
 <header class="top">
  <div class="brand"><img src="{{MINI}}" alt=""><div class="wm"><b>BOSS</b><span>QUICK DOCK</span></div><div class="credit"><small>Developed by</small><b>RamalhoBoss</b><em>based on HearBridge by X-F1REBALL-X</em></div></div>
  <nav class="tabs" id="tabs">
-  <button class="tab on" data-v="vHome">Home</button><button class="tab" data-v="vDev">Devices</button><button class="tab" data-v="vGames">Games</button><button class="tab" data-v="vSys">System</button>
+  <button class="tab on" data-v="vHome">Home</button><button class="tab" data-v="vDev">Devices</button><button class="tab" data-v="vGames">Games</button><button class="tab" data-v="vSys">System</button><button class="tab" data-v="vDiag">Diagnostics</button><button class="tab" data-v="vRecord">Recording</button>
  </nav>
  <div class="sp"></div>
  <div class="pill" id="pill"><i></i><span id="pillt">Connecting…</span></div>
+ <span class="studio-ver" id="buildTop"></span><button class="b r sm" id="stopTop">Stop app</button>
  <div class="clock"><b id="clk">--:--</b><span id="clkd"></span></div>
 </header>
 <main class="views">
+<section class="view" id="vRecord">
+ <div class="card studio-wide" style="--acc:var(--cyan)"><div class="ct">Native audio studio <span class="sp"></span><span class="chip">AAC + Opus</span></div>
+ <p class="studio-note">Record the PS5 audio mix using the console's native encoder. AAC and Opus capture were verified on this console. Disconnect Bluetooth before recording; reconnect when finished.</p>
+ <div class="mrow"><button class="b" id="nativeDisconnect">Disconnect Bluetooth</button><button class="b" id="nativeReconnect">Reconnect Bluetooth</button></div>
+ <div class="live-box"><h3>Live Opus → PC</h3><p class="studio-note">Open the PC Receiver and select Start listening. Enter its LAN IPv4 address below, disconnect Bluetooth, then start live audio. Stop the stream before reconnecting Bluetooth.</p><div class="mrow"><label for="liveIP">PC IPv4</label><input id="liveIP" type="text" maxlength="15" placeholder="192.168.1.134" autocomplete="off"><label for="livePort">UDP port</label><input id="livePort" type="number" min="1024" max="65535" value="18098"></div><div class="mrow"><button class="b p" id="liveStart">Start live Opus</button><button class="b r" id="liveStop" disabled>Stop live audio</button></div><p class="studio-note" id="liveState">Opus · stereo 48 kHz · 10 ms blocks · UDP · up to two hours per session</p></div>
+ <h3>Save a recording</h3><div class="mrow"><label for="nativeFormat">Format</label><select id="nativeFormat"><option value="1">AAC · 48 kHz stereo</option><option value="2">Opus · 48 kHz stereo</option></select><label for="nativeLength">Duration</label><select id="nativeLength"><option value="12">12 seconds</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select></div>
+ <div class="mrow"><button class="b" id="nativeStart">Start recording</button><button class="b r" id="nativeStop" disabled>Stop recording</button><button class="b sm" id="nativeRefresh">Refresh</button></div>
+ <p id="nativeState" class="studio-note" aria-live="polite">Ready · disconnect Bluetooth to record</p><progress id="nativeProgress" max="100" value="0" aria-label="Recording progress"></progress>
+ <div class="kv" id="nativeKV"></div>
+ <div id="nativeDownloads" hidden><div class="mrow"><a class="b" id="nativeFile" href="/api/native/download">Download audio</a><a class="b" href="/api/native/download?raw=1">Download raw packets</a><button class="b sm" id="nativeReport">Export recording report</button></div><p class="studio-note">AAC downloads use ADTS; Opus downloads use Ogg. Playback depends on your browser or audio player. Raw packets preserve native timestamps. Files remain in /data/hearbridge; starting a new recording changes these links to the latest result.</p></div>
+ </div>
+ <div class="card studio-wide"><div class="ct">What this adds</div><div class="kv"><span class="k">AAC recording</span><span class="n">128 kb/s · 1024 samples per block</span><span class="k">Opus recording</span><span class="n">128 kb/s · 480 samples per block</span><span class="k">Native clock continuity</span><span class="n">Packet timestamps retained and checked</span><span class="k">Bluetooth output</span><span class="n">Uses the connected device's supported codec</span></div><p class="studio-note">Opus blocks contain 10 ms of audio; this is not a measurement of total latency. These encoders create new recording options and live transmission to the PC Receiver. Opus encoder pre-skip is unknown, so exports preserve all captured samples.</p></div>
+</section>
+<section class="view" id="vDiag">
+ <div class="card studio-wide" style="--acc:var(--cyan)"><div class="ct">Audio observatory<span class="sp"></span><button class="b sm" id="diagExport">Export report</button></div>
+ <p class="studio-note" id="studioDevice">Waiting for data</p>
+ <div class="studio-graphs"><div><span class="k">Bluetooth queue · packets</span><canvas id="queueChart" aria-label="Bluetooth queue history"></canvas></div><div><span class="k">SBC quality · bitpool</span><canvas id="bpChart" aria-label="SBC bitpool history"></canvas></div></div>
+ <div class="kv" id="recentKV"></div><div class="row"><button class="b sm" id="clearCharts">Clear recent history</button><span class="k">Rolling window: up to 60 seconds of observed data.</span></div>
+ <p class="studio-note">Last 120 samples collected in this browser tab, approximately two minutes. History resets when the session changes; observation gaps remain visible in the chart.</p>
+ </div>
+ <div class="card" style="--acc:var(--violet)"><div class="ct">Native capture health</div><div class="kv" id="captureKV"></div><p class="studio-note">Avcap2 · reads without the additional wait loop. Empty reads are normal between PCM blocks; valid silence also counts as progress. An overrun means the library had to reposition its reader.</p></div>
+ <div class="card" style="--acc:var(--cyan)"><div class="ct">Stability test</div><div class="row"><select id="testLen" aria-label="Test duration"><option value="60">1 minute</option><option value="300" selected>5 minutes</option><option value="600">10 minutes</option></select><button class="b p" id="testStart">Start test</button><button class="b sm" id="testEnd" disabled>Finish test</button></div><p id="testState" aria-live="polite">Ready to test</p><div class="kv" id="testKV"></div><p class="studio-note">Keep this browser tab open and audio playing. The test samples counters; it does not replace listening. Disconnecting, changing sessions or resetting counters interrupts the test. Export before closing or reloading the page: history is kept in memory.</p></div>
+ <div class="card studio-wide"><div class="ct">Detailed diagnostics<span class="sp"></span><button class="b sm" id="diagRefresh">Refresh diagnostics</button></div><p class="studio-note" id="diagWhen">Refresh on demand: no additional diagnostic polling during playback.</p><pre id="diagRaw"></pre><div id="exportFallback" style="display:none"><p class="studio-note">If the browser cannot download the file, copy this JSON report. It contains no PCM, tokens or pairing keys.</p><textarea id="exportText" readonly aria-label="JSON report to copy"></textarea></div></div>
+</section>
 <!-- ================= INÍCIO ================= -->
 <section class="view on" id="vHome">
  <div class="card hero" style="--hero:url({{HERO}})">
@@ -253,11 +310,13 @@ input.tx:focus{border-color:var(--blue2);box-shadow:0 0 1rem rgba(47,123,255,.5)
 <!-- ================= SISTEMA ================= -->
 <section class="view" id="vSys">
  <div class="card"><div class="ct">Audio</div>
-  <span class="k">Codec</span><div class="seg" id="codec"><button class="b" data-m="0">Auto</button><button class="b" data-m="1">SBC</button><button class="b" data-m="2">SBC HQ</button><button class="b" data-m="3">SBC-XQ</button><button class="b" data-m="4">aptX</button></div>
-  <p class="k" id="codecNote"></p>
   <div class="sl lat"><label for="lat">Latency buffer</label><span class="n" id="latN">–</span><input type="range" id="lat" min="40" max="400" step="1"></div>
-  <div class="lbar" id="lbar"></div><div class="lkeys" id="lkeys"></div>
+  <p class="studio-note" id="latNote"></p><div class="lbar" id="lbar"></div><div class="lkeys" id="lkeys"></div>
+
+  <span class="k">Quick buffer presets</span><div class="row"><button class="b sm" data-buffer="auto">Automatic</button><button class="b sm" data-buffer="120">Quick response · 120 ms</button><button class="b sm" data-buffer="250">Stable · 250 ms</button></div><p class="studio-note">Queue targets, not total latency. Quick response is experimental: a smaller buffer can increase packet demand and dropouts. Use Automatic if drops increase.</p><span class="k">Codec</span><div class="seg" id="codec"><button class="b" data-m="0">Auto</button><button class="b" data-m="1">SBC</button><button class="b" data-m="2">SBC HQ</button><button class="b" data-m="3">SBC-XQ</button><button class="b" data-m="4">aptX</button></div>
+  <p class="k" id="codecNote"></p>
  </div>
+ <div class="card" style="--acc:var(--violet)"><div class="ct">Display & readability</div><span class="k">Text size</span><div class="row read-size"><button class="b" data-text-size="standard">Standard</button><button class="b" data-text-size="large">Large</button><button class="b" data-text-size="tv">TV</button></div><p class="studio-note">Saved in this browser. Larger text uses more scrolling; audio settings are unchanged.</p></div>
  <div class="card" style="--acc:var(--cyan)"><div class="ct">Status</div><div class="kv" id="kv"></div></div>
  <div class="card" style="--acc:var(--warn)"><div class="ct">Backup</div>
   <p class="k">Saved headsets (with pairing), settings and game profiles in one file.</p>
@@ -283,7 +342,7 @@ function msg(t,info){var m=$('msg');m.textContent=t||'';m.className='msg'+(info?
 function takeTok(j){if(j&&typeof j.token=='string'&&/^[0-9a-f]{32}$/.test(j.token))TOKEN=j.token}
 function xhr(m,p,cb,again,body){var x=new XMLHttpRequest();x.open(m,p,true);x.timeout=body!==undefined?15000:4000;if(m=='POST')x.setRequestHeader('X-HB-Token',TOKEN);
  x.onload=function(){var j=null;try{j=JSON.parse(x.responseText)}catch(e){}
-  if(x.status==200&&j&&j.version!==undefined){S=j;takeTok(j);okT=Date.now();msg('');draw()}
+  if(x.status==200&&j&&j.version!==undefined){S=j;takeTok(j);okT=Date.now();studioSample(j);msg('');draw()}
   else if(x.status==403&&m=='POST'&&!again){xhr('GET','/api/status',function(){xhr(m,p,cb,1,body)});return}
   else if(x.status==403)msg('The app was restarted. Reload this page.');
   if(cb)cb(x.status,j,x.responseText)};
@@ -305,13 +364,13 @@ function icon(k){return '<svg viewBox="0 0 24 24">'+(IC[k]||(/speaker|portable|h
 function kindOf(cod){var c=parseInt(cod,16)||0,maj=(c>>8)&31,min=(c>>2)&63;if(maj!=4)return 'audio';return {6:'headphones',1:'headset',5:'speaker',7:'portable',10:'hifi',8:'car',2:'handsfree'}[min]||'av'}
 function dur(s){s=s|0;if(s<60)return s+' s';if(s<3600)return Math.floor(s/60)+' min';return Math.floor(s/3600)+' h '+Math.floor(s%3600/60)+' m'}
 /* ---------- tabs (L1/R1 or Q/E also switch) ---------- */
-var TABS=['vHome','vDev','vGames','vSys'];
+var TABS=['vHome','vDev','vGames','vSys','vDiag','vRecord'];
 function view(v){var i,t=document.querySelectorAll('.tab');for(i=0;i<t.length;i++)t[i].className='tab'+(t[i].getAttribute('data-v')==v?' on':'');
  for(i=0;i<TABS.length;i++)$(TABS[i]).className='view'+(TABS[i]==v?' on':'');
- if(v=='vDev'){saved();blocked();devices()}if(v=='vSys')bkCheck();try{localStorage.setItem('bqdView',v)}catch(e){}}
+ if(v=='vDev'){saved();blocked();devices()}if(v=='vRecord')nativePoll();if(v=='vSys')bkCheck();if(v=='vDiag'&&S)studioDraw();try{localStorage.setItem('bqdView',v)}catch(e){}}
 (function(){var t=document.querySelectorAll('.tab');for(var i=0;i<t.length;i++)t[i].onclick=function(){view(this.getAttribute('data-v'))}})();
 document.addEventListener('keydown',function(e){var c=e.keyCode,cur=0;for(var i=0;i<TABS.length;i++)if($(TABS[i]).className.indexOf('on')>0)cur=i;
- if(c==81||c==33){view(TABS[(cur+3)%4]);e.preventDefault()}else if(c==69||c==34){view(TABS[(cur+1)%4]);e.preventDefault()}});
+ if(c==81||c==33){view(TABS[(cur+TABS.length-1)%TABS.length]);e.preventDefault()}else if(c==69||c==34){view(TABS[(cur+1)%TABS.length]);e.preventDefault()}});
 /* ---------- draw ---------- */
 function draw(){if(!S)return;var s=stOf(),on=linked();
  setPill(on?'ok':s=='connecting'||s=='pairing'?'wait':'',ST[s]||s||'–');
@@ -345,7 +404,7 @@ function draw(){if(!S)return;var s=stOf(),on=linked();
  $('ver').textContent='v'+S.version;
  var ev=S.events||[],lg='';for(i=ev.length-1;i>=0;i--){var k=/could not|did not|lost|busy|weak|unstable|out of range/i.test(ev[i])?'bad':/playing|connected|turned on|saved|restored/i.test(ev[i])?'good':'';lg+='<div class="'+k+'">'+esc(ev[i])+'</div>'}
  $('log').innerHTML=lg||'<div>Nothing yet</div>';
- drawGame();if(SAVL.length)drawSaved()}
+ studioDraw();drawGame();if(SAVL.length)drawSaved()}
 /* ---------- equalizer ---------- */
 var BANDS=['Bass','Low mid','Mid','Presence','Treble'],PRE=[['Flat',[0,0,0,0,0]],['Bass boost',[6,3,0,0,0]],['Bass cut',[-6,-3,0,0,0]],['Treble boost',[0,0,0,3,6]],['Voice / footsteps',[-3,0,3,5,2]]],eqT=0;
 (function(){var h='';for(var i=0;i<5;i++)h+='<div class="eqb"><span class="n" id="eqn'+i+'">0</span><div class="rw"><input type="range" id="eq'+i+'" min="-12" max="12" step="1" value="0"></div><small>'+BANDS[i]+'</small></div>';$('eqv').innerHTML=h;
@@ -372,7 +431,7 @@ $('hConn').onclick=function(){act(S&&S.connected?'/api/disconnect':'/api/connect
 $('hScan').onclick=function(){view('vDev');scanPress()};
 $('lat').oninput=function(){busy.l=1;$('latN').textContent=this.value+' ms';fill(this)};$('lat').onchange=function(){act('/api/latency?ms='+this.value,function(){busy.l=0})};
 (function(){var cs=document.querySelectorAll('#codec .b');for(var i=0;i<cs.length;i++)cs[i].onclick=function(){act('/api/codec?mode='+this.getAttribute('data-m'))}})();
-$('stop').onclick=function(){if(confirm('Stop BossQuickDock?'))act('/api/stop')};
+/* Stop handlers are shared with the visible header control below. */
 /* ---------- devices ---------- */
 function saved(){getj('/api/saved',function(j){SAVL=j.devices||[];SAV={};for(var i=0;i<SAVL.length;i++)SAV[SAVL[i].addr]=1;drawSaved()})}
 function drawSaved(){var on=linked(),s=stOf(),bz=s=='connecting'||s=='pairing',h='';
@@ -394,7 +453,7 @@ function scanPress(){act('/api/scan?user=1');scanUntil=Date.now()+12000;$('scann
 $('scan').onclick=scanPress;
 function blocked(){getj('/api/blocked',function(j){var h='',L=j.blocked||[];for(var i=0;i<L.length;i++){var a=L[i].addr||L[i];
  h+='<div class="it"><span class="ico">'+icon('x')+'</span><span><b>'+esc(L[i].name||a)+'</b><span class="k">'+esc(a)+'</span></span><span class="acts"><button class="b sm" data-ub="'+esc(a)+'">Unblock</button></span></div>'}
- $('blkL').innerHTML=h||'<div class="empty">No device bloqueado.</div>';wireList('blkL')})}
+ $('blkL').innerHTML=h||'<div class="empty">No blocked devices.</div>';wireList('blkL')})}
 $('blkAdd').onclick=function(){var v=$('blkA').value.trim().toUpperCase();if(!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(v)){msg('Invalid address');return}act('/api/block?on=1&addr='+v,function(){$('blkA').value='';blocked()})};
 /* ---------- games ---------- */
 function gHue(id){var h=0;for(var i=0;i<id.length;i++)h=(h*31+id.charCodeAt(i))%360;return h}
@@ -441,6 +500,8 @@ $('bkFile').onchange=function(){var f=this.files[0];if(!f)return;var r=new FileR
    cx.globalAlpha=1-l*.32;cx.lineWidth=2.4-l*.6;cx.stroke()}
   cx.globalAlpha=1;raf(fr)}
  raf(fr)})();
+/*MONITOR*/
+/*STUDIO*/
 /* ---------- clock + polling ---------- */
 function clk(){var d=new Date(),h=d.getHours(),m=d.getMinutes();$('clk').textContent=(h<10?'0':'')+h+':'+(m<10?'0':'')+m;try{$('clkd').textContent=d.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})}catch(e){}}
 clk();setInterval(clk,15000);
