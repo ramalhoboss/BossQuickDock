@@ -307,6 +307,7 @@ function setLang(l){if(l==L)return;L=l;document.documentElement.lang=l;
 function view(id){var b=$('tabs').children,v=document.querySelectorAll('.view'),i;for(i=0;i<b.length;i++)b[i].classList.toggle('on',b[i].getAttribute('data-v')==id);
  for(i=0;i<v.length;i++)v[i].classList.toggle('on',v[i].id==id);if(id=='vSet')loadOut()}
 (function(){var b=$('tabs').children;for(var i=0;i<b.length;i++)b[i].onclick=function(){view(this.getAttribute('data-v'))}})();
+if(/^#v(Home|Set|Help)$/.test(location.hash))view(location.hash.slice(1));   /* e.g. #vHelp opens Help */
 /* ---------- drawing ---------- */
 function fmtUp(s){s=s|0;var m=s/60|0,h=m/60|0;return h?h+'h'+('0'+m%60).slice(-2):m+':'+('0'+s%60).slice(-2)}
 function kvRow(k,v,cls){return '<span class="k">'+esc(k)+'</span><span class="n '+(cls||'')+'">'+esc(v)+'</span>'}

@@ -11,3 +11,6 @@
 .DS_Store
 *.swp
 /backup-*/
+__pycache__/
+/receiver/deps/
+/receiver/python/

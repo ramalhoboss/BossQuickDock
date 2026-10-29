@@ -626,26 +626,41 @@ def open_window(url):
     return None
 
 
+class Server(ThreadingHTTPServer):
+    # Windows lets a second socket bind a port that has SO_REUSEADDR, so a
+    # second copy would share it with the first. Exclusive: the bind fails
+    # and the second copy only shows the running one.
+    allow_reuse_address = False
+    daemon_threads = True
+
+    def server_bind(self):
+        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def main():
-    global APP, DEV, DATA, BIND
+    global APP, DEV, DATA, BIND, UI_PORT
     p = argparse.ArgumentParser()
     p.add_argument('--no-window', action='store_true', help='do not open a window (tests)')
     p.add_argument('--dev', action='store_true', help='allow a console on 127.0.0.1 (mock tests)')
     p.add_argument('--data', help='settings folder (tests)')
+    p.add_argument('--ui-port', type=int, help='page port (tests, so they never meet the real app)')
     a = p.parse_args()
     DEV = a.dev
     if DEV:
         BIND = '127.0.0.1'
     if a.data:
         DATA = Path(a.data)
+    if a.ui_port:
+        UI_PORT = a.ui_port
     url = 'http://127.0.0.1:%d/' % UI_PORT
     try:
-        server = ThreadingHTTPServer(('127.0.0.1', UI_PORT), Handler)
+        server = Server(('127.0.0.1', UI_PORT), Handler)
     except OSError:                          # already running: just show it
         if not a.no_window:
             open_window(url)
         return
-    server.daemon_threads = True
     APP = App()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     proc = None if a.no_window else open_window(url)
