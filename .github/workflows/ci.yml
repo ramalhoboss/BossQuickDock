@@ -1,7 +1,9 @@
 # Every push and pull request: the host tests, then the console payload
-# built with the PS5 Payload SDK (import check included). The .elf is kept
-# as a build artifact. A v* tag also publishes the GitHub release, with
-# that .elf and release-notes/<tag>.md as its text.
+# built with the PS5 Payload SDK (import check included), then the two
+# downloads: the .elf zipped, and the PC Receiver for Windows (its Python
+# packages and the official embeddable Python included, nothing to install).
+# They are kept as build artifacts. A v* tag also publishes the GitHub
+# release with the .elf, both zips and release-notes/<tag>.md as its text.
 name: CI
 
 on:
@@ -14,17 +16,18 @@ permissions:
 
 env:
   PS5_SDK_VERSION: v0.45
+  PY_EMBED: 3.12.10        # last 3.12 with Windows downloads; receiver deps are cp312
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-18 lld-18 llvm-18 ffmpeg python3-numpy nodejs unzip
+          sudo apt-get install -y -qq clang-18 lld-18 llvm-18 ffmpeg python3-numpy python3-venv nodejs unzip zip
 
       - name: Host tests
         run: make test
@@ -40,10 +43,35 @@ jobs:
           make ps5 PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
           ls -l dist
 
-      - uses: actions/upload-artifact@v4
+      - name: Package the ELF zip and the PC Receiver
+        run: |
+          v=$(sed -n 's/^#define HEARBRIDGE_VERSION "\(.*\)"/\1/p' src/version.h)
+          rv=$(sed -n "s/^VERSION = '\(.*\)'/\1/p" receiver/app.py)
+          mkdir -p pkg
+          zip -9 -j "pkg/BossQuickDock-$v.zip" "dist/BossQuickDock-$v.elf" LICENSE NOTICE
+          r=stage/BossQuickDock-Receiver
+          mkdir -p "$r"
+          cp -r receiver/. "$r/"
+          cp LICENSE NOTICE "$r/"
+          python3 -m venv /tmp/pyv
+          /tmp/pyv/bin/pip install --quiet --target "$r/deps" --platform win_amd64 --python-version 3.12 \
+            --implementation cp --only-binary=:all: -r receiver/requirements.txt
+          curl -fsSL -o /tmp/python.zip "https://www.python.org/ftp/python/${PY_EMBED}/python-${PY_EMBED}-embed-amd64.zip"
+          unzip -q /tmp/python.zip -d "$r/python"
+          test -f "$r/python/pythonw.exe"
+          (cd stage && zip -9 -q -r "../pkg/BossQuickDock-Receiver-$rv-windows.zip" BossQuickDock-Receiver)
+          ls -l pkg
+
+      - uses: actions/upload-artifact@v5
         with:
           name: BossQuickDock-elf
           path: dist/*.elf
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: BossQuickDock-downloads
+          path: pkg/*.zip
           if-no-files-found: error
 
   release:
@@ -53,17 +81,22 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: BossQuickDock-elf
           path: dist
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: BossQuickDock-downloads
+          path: pkg
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           v="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" "dist/BossQuickDock-$v.elf" \
+          gh release create "$GITHUB_REF_NAME" "dist/BossQuickDock-$v.elf" pkg/*.zip \
             --title "BossQuickDock $v" --notes-file "release-notes/$GITHUB_REF_NAME.md"
