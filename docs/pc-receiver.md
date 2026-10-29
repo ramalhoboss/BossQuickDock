@@ -13,7 +13,7 @@ Nothing else to install: the zip carries its own Python 3.12 (`python\`) and the
 
 ## Use
 
-1. On the PS5, open **BossQuickDock 1.6.2** (1.5.1 or newer works too).
+1. On the PS5, open **BossQuickDock 1.6.3** (1.5.1 or newer works too).
 2. Connect the PC to the **same network** as the PS5.
 3. Press **Find PS5** — the receiver looks for BossQuickDock on the local network (about 4 s) — or type the PS5 IP and press **Save**.
 4. Press **Listen on PC**. The receiver turns the PS5 Bluetooth off, asks for the stream, and the sound plays here.

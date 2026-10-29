@@ -1,8 +1,9 @@
-# What's new in 1.6.2
+# What's new in 1.6
 
-Everything that changed between **1.1.2** and **1.6.2**: the PS5 audio on your PC, native AAC / Opus recording, a capture path that heals itself, a diagnostics studio in the control page, and the fixes found by reverse engineering the console's capture library.
+Everything that changed between **1.1.2** and **1.6.3**: the PS5 audio on your PC, native AAC / Opus recording, a capture path that heals itself, a diagnostics studio in the control page, the fixes found by reverse engineering the console's capture library, and what "best Bluetooth quality" really means on a PS5.
 
 - [The road from 1.1.2 to 1.6.2](#the-road-from-112-to-162)
+- [1.6.3: the best Bluetooth quality](#163-the-best-bluetooth-quality)
 - [How the audio flows now](#how-the-audio-flows-now)
 - [PS5 audio on your PC](#ps5-audio-on-your-pc)
 - [Native recording (AAC / Opus)](#native-recording-aac--opus)
@@ -13,7 +14,7 @@ Everything that changed between **1.1.2** and **1.6.2**: the PS5 audio on your P
 
 ## The road from 1.1.2 to 1.6.2
 
-Several builds were made and tested on the console between the two releases. Only **1.6.2** is published.
+Several builds were made and tested on the console between the two releases. Only **1.6.2** and **1.6.3** are published.
 
 ```mermaid
 timeline
@@ -26,6 +27,7 @@ timeline
     1.5.1 stable9 : Sender recovery, PC Receiver recovery
     1.6.0 direct10 : Experimental direct SBC path
     1.6.2 release : 64 KB capture buffer : Direct SBC off (paced SBC again) : PC Receiver app 1.0
+    1.6.3 release : SBC-XQ falls back to SBC also when picked by hand
 ```
 
 | Build | What it added | Published |
@@ -39,6 +41,7 @@ timeline
 | 1.5.1-stable9 | The sender reopens capture (3 times) and its UDP socket by itself; the receiver rebuffers after gaps | no |
 | 1.6.0-direct10 | Experimental "direct SBC" Bluetooth path (see below) | no |
 | **1.6.2** | Everything above + 64 KB capture buffer + direct SBC **off** + the [PC Receiver](pc-receiver.md) app | **yes** |
+| **1.6.3** | SBC-XQ picked by hand goes back to SBC when the link cannot carry it ([below](#163-the-best-bluetooth-quality)) | **yes** |
 
 ## How the audio flows now
 
@@ -128,11 +131,32 @@ xychart-beta
 |---|---|---|---|---|---|
 | 1.1.2 | paced | 7 frames · 18.7 ms | 118,719 | 35 (0.03 %) | 32–35 |
 | 1.6.1 (test) | direct | 4 frames · 10.7 ms | 4,220 | **1,139 (27 %)** | fell to 22 |
-| **1.6.2** | paced | 8 frames · 21.3 ms | 3,400 | **2 (0.06 %)** | 22 (learned in the 1.6.1 test) |
+| **1.6.2** | paced | 8 frames · 21.3 ms | 3,400 | **2 (0.06 %)** | 22 at first, 39 later in the session |
 
 So 1.6.2 switches the direct path off (`BQD_DIRECT_SBC 0` in `src/a2dp/direct_sbc.h`) and SBC uses the paced queue again, which absorbs those gaps. The code stays in the tree; build with `-DBQD_DIRECT_SBC=1` to experiment with it. aptX was never affected.
 
-The rate controller lowers the SBC bitpool when packets are dropped and remembers the level that held for each headset. It only steps up after 4 s without drops while the controller returns credits with headroom, so in the 1.6.2 test the speaker was still at 22, the level learned during the 1.6.1 test (1.1.2 ran it at 32–35).
+The rate controller lowers the SBC bitpool when packets are dropped and remembers the level that held for each headset. It only steps up after 4 s without drops while the controller returns credits with headroom, so the 1.6.2 test started at 22, the level learned during the 1.6.1 test, and climbed back on its own: 34 after an hour, then 39, the speaker's maximum.
+
+## 1.6.3: the best Bluetooth quality
+
+What sets the quality over Bluetooth is the codec and its bitpool, and each headset announces what it accepts. The Sonic Sub 630 announces SBC with a **maximum bitpool of 39**, and in some connections also **SBC-XQ** (dual channel, each channel its own bitpool, up to 38).
+
+| Mode | Bitpool | Bitrate at 48 kHz | On the console (Sonic Sub 630) |
+|---|---|---|---|
+| SBC (joint stereo) | 39 (speaker's maximum) | ~273 kbit/s | **0 drops**; back to 39 within ~80 s after a switch |
+| SBC-XQ (dual channel) | 38 per channel | ~492 kbit/s | ~340 dropped packets/min, bitpool stuck at the floor (22), stream restarting |
+
+```mermaid
+xychart-beta
+    title "Dropped Bluetooth packets per minute (Sonic Sub 630, measured on the PS5)"
+    x-axis ["SBC, bitpool 39", "SBC-XQ"]
+    y-axis "packets / min" 0 --> 400
+    bar [0, 340]
+```
+
+SBC-XQ needs almost twice the airtime, and the console's Bluetooth controller pauses for 60–90 ms now and then (see above); at that rate the queue cannot catch up. So on this console the best quality that plays without cuts is **SBC at the headset's maximum bitpool**, which BossQuickDock reaches by itself and remembers per headset. Leave the codec on **Auto** or **SBC**.
+
+1.6.2 only gave SBC-XQ back when *Auto* had picked it; picked by hand, it kept dropping until you changed the codec yourself. **1.6.3** applies the same rule to a manual pick: after 10 s of drops at the bottom of the range (or 30 s below bitpool 30) it goes back to SBC, the System → Codec page shows SBC selected and says *"This headset cannot hold SBC-XQ on this signal"*. The SBC-XQ button only appears when the headset announces dual channel in that connection.
 
 ## Control page: studio and readability
 

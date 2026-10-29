@@ -8,20 +8,21 @@
 
 Developed by **RamalhoBoss** · based on **[HearBridge PS5](https://github.com/X-F1REBALL-X/HearBridge-PS5) by X-F1REBALL-X**
 
-[**Download 1.6.2**](https://github.com/ramalhoboss/BossQuickDock/releases/latest) · [What's new](docs/whats-new-1.6.md) · [PC Receiver](docs/pc-receiver.md) · [Building](docs/building.md)
+[**Download 1.6.3**](https://github.com/ramalhoboss/BossQuickDock/releases/latest) · [What's new](docs/whats-new-1.6.md) · [PC Receiver](docs/pc-receiver.md) · [Building](docs/building.md)
 
 </div>
 
 <p align="center"><img src="docs/screenshot.jpg" alt="BossQuickDock control page"></p>
 
-## What's new in 1.6.2
+## What's new in 1.6
 
 - **PS5 audio on your PC** — the new [BossQuickDock Receiver](docs/pc-receiver.md) for Windows: unzip, double-click, **Find PS5**, **Listen on PC**. The console's own Opus encoder sends the sound over the LAN; **Back to Bluetooth** gives it back to your headset.
 - **Native recording** of the PS5 mix as AAC or Opus, with downloads.
 - **Capture that heals itself**, and the cause of the "silent until restart" capture error found and fixed (64 KB read buffer) — [Avcap2 internals](docs/avcap2-internals.md).
 - **Diagnostics studio** on the control page: queue / bitpool charts, stability tests, JSON report, readability modes.
+- **1.6.3:** SBC-XQ goes back to SBC by itself when the link cannot carry it, also when you picked it by hand — [best Bluetooth quality](docs/whats-new-1.6.md#163-the-best-bluetooth-quality).
 
-Full story, with diagrams and measurements from the console: **[What's new in 1.6.2](docs/whats-new-1.6.md)**.
+Full story, with diagrams and measurements from the console: **[What's new in 1.6](docs/whats-new-1.6.md)**.
 
 <p align="center"><img src="docs/img/receiver-home.jpg" width="760" alt="BossQuickDock Receiver on the PC"></p>
 
@@ -56,7 +57,7 @@ Every release has three files:
 **On the PS5**
 
 1. Jailbreak your PS5 and run an ELF loader (firmware up to 14.10 supported; tested on 13.60).
-2. Send `BossQuickDock-1.6.2.elf` to the console (for example, copy it to `/data/pldmgr/payloads/local` and launch it from your payload manager). If an older BossQuickDock is running, press **Stop app** first.
+2. Send `BossQuickDock-1.6.3.elf` to the console (for example, copy it to `/data/pldmgr/payloads/local` and launch it from your payload manager). If an older BossQuickDock is running, press **Stop app** first.
 3. Open the **BossQuickDock** tile on the home screen, or browse to `http://<console-ip>:8090` from a phone or PC.
 4. Put your headphones in pairing mode and press **Scan for devices**.
 
@@ -106,7 +107,7 @@ The ELF is written to `dist/BossQuickDock-<version>.elf`. Build with `-DBQD_LOG_
 
 ## Documentation
 
-- [What's new in 1.6.2](docs/whats-new-1.6.md) — every change since 1.1.2, with diagrams and console measurements
+- [What's new in 1.6](docs/whats-new-1.6.md) — every change since 1.1.2, with diagrams and console measurements
 - [PC Receiver](docs/pc-receiver.md) — install, use, the UDP stream, how it is built
 - [Avcap2 internals](docs/avcap2-internals.md) — how the PS5 audio capture really works (reverse engineered)
 - [Building](docs/building.md) — CI, Linux, Windows
